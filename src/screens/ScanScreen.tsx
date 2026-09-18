@@ -50,7 +50,11 @@ export default function ScanScreen({ route, navigation }: Props) {
 
   const handleManualSave = async () => {
     const total = parseFloat(manualTotal.replace(',', '.'));
-    if (!Number.isFinite(total) || total <= 0) return;
+    if (!Number.isFinite(total) || total <= 0) {
+      setErrorMessage('Informe um valor válido maior que zero.');
+      return;
+    }
+    setErrorMessage('');
     setStage('saving');
     const purchaseId = await createPurchase(
       db,
@@ -66,6 +70,11 @@ export default function ScanScreen({ route, navigation }: Props) {
     handledRef.current = false;
     setErrorMessage('');
     setStage('scanning');
+  };
+
+  const goToManual = () => {
+    setErrorMessage('');
+    setStage('manual');
   };
 
   if (!permission) {
@@ -97,6 +106,7 @@ export default function ScanScreen({ route, navigation }: Props) {
           value={manualTotal}
           onChangeText={setManualTotal}
         />
+        {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
         <Pressable style={styles.primaryButton} onPress={handleManualSave}>
           <Text style={styles.primaryButtonText}>Salvar compra</Text>
         </Pressable>
@@ -112,7 +122,7 @@ export default function ScanScreen({ route, navigation }: Props) {
         <Pressable style={styles.primaryButton} onPress={retryScan}>
           <Text style={styles.primaryButtonText}>Tentar novamente</Text>
         </Pressable>
-        <Pressable style={styles.secondaryButton} onPress={() => setStage('manual')}>
+        <Pressable style={styles.secondaryButton} onPress={goToManual}>
           <Text style={styles.secondaryButtonText}>Informar valor manualmente</Text>
         </Pressable>
       </View>
@@ -136,7 +146,7 @@ export default function ScanScreen({ route, navigation }: Props) {
       />
       <View style={styles.overlay}>
         <Text style={styles.overlayText}>Aponte a câmera para o QR Code do cupom fiscal</Text>
-        <Pressable style={styles.secondaryButton} onPress={() => setStage('manual')}>
+        <Pressable style={styles.secondaryButton} onPress={goToManual}>
           <Text style={styles.secondaryButtonText}>Informar valor manualmente</Text>
         </Pressable>
       </View>
@@ -155,6 +165,7 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 20, fontWeight: '700', marginBottom: 8, textAlign: 'center' },
   message: { fontSize: 16, color: '#374151', textAlign: 'center', marginBottom: 20 },
+  errorText: { fontSize: 14, color: '#ef4444', textAlign: 'center', marginTop: -12, marginBottom: 16 },
   input: {
     borderWidth: 1,
     borderColor: '#d1d5db',

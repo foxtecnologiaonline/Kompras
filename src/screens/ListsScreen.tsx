@@ -1,10 +1,10 @@
 import { useCallback, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSQLiteContext } from 'expo-sqlite';
 import type { RootStackParamList, ShoppingList } from '../types';
-import { createShoppingList, getShoppingLists } from '../db/repository';
+import { createShoppingList, deleteShoppingList, getShoppingLists } from '../db/repository';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Lists'>;
 
@@ -29,6 +29,24 @@ export default function ListsScreen({ navigation }: Props) {
     navigation.navigate('ListDetail', { listId: id });
   };
 
+  const handleDelete = (list: ShoppingList) => {
+    Alert.alert(
+      'Excluir lista',
+      `Excluir a lista de ${formatDate(list.created_at)}? Os itens dela serão perdidos.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Excluir',
+          style: 'destructive',
+          onPress: async () => {
+            await deleteShoppingList(db, list.id);
+            await load();
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.headerRow}>
@@ -44,10 +62,16 @@ export default function ListsScreen({ navigation }: Props) {
         ListEmptyComponent={
           <Text style={styles.emptyText}>Nenhuma lista ainda. Crie a sua primeira!</Text>
         }
+        ListHeaderComponent={
+          lists.length > 0 ? (
+            <Text style={styles.hint}>Toque e segure uma lista para excluí-la</Text>
+          ) : null
+        }
         renderItem={({ item }) => (
           <Pressable
             style={styles.listRow}
             onPress={() => navigation.navigate('ListDetail', { listId: item.id })}
+            onLongPress={() => handleDelete(item)}
           >
             <Text style={styles.listTitle}>Lista de {formatDate(item.created_at)}</Text>
           </Pressable>
@@ -73,6 +97,12 @@ const styles = StyleSheet.create({
   historyButtonText: { color: '#2563eb', fontSize: 16, fontWeight: '600' },
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { color: '#6b7280', fontSize: 16 },
+  hint: {
+    color: '#9ca3af',
+    fontSize: 12,
+    paddingHorizontal: 20,
+    paddingBottom: 8,
+  },
   listRow: {
     paddingVertical: 16,
     paddingHorizontal: 20,
