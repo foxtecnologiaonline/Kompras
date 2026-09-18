@@ -1,0 +1,185 @@
+import { useCallback, useState } from 'react';
+import {
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useSQLiteContext } from 'expo-sqlite';
+import type { RootStackParamList, ShoppingListItem } from '../types';
+import {
+  addListItem,
+  deleteListItem,
+  getListItems,
+  setListItemChecked,
+  updateListItemName,
+} from '../db/repository';
+
+type Props = NativeStackScreenProps<RootStackParamList, 'ListDetail'>;
+
+export default function ListDetailScreen({ route, navigation }: Props) {
+  const { listId } = route.params;
+  const db = useSQLiteContext();
+  const [items, setItems] = useState<ShoppingListItem[]>([]);
+  const [newItemName, setNewItemName] = useState('');
+
+  const load = useCallback(async () => {
+    const rows = await getListItems(db, listId);
+    setItems(rows);
+  }, [db, listId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
+
+  const handleAdd = async () => {
+    const name = newItemName.trim();
+    if (!name) return;
+    await addListItem(db, listId, name);
+    setNewItemName('');
+    await load();
+  };
+
+  const handleToggle = async (item: ShoppingListItem) => {
+    await setListItemChecked(db, item.id, !item.checked);
+    await load();
+  };
+
+  const handleRename = async (item: ShoppingListItem, name: string) => {
+    setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, name } : i)));
+  };
+
+  const handleRenameCommit = async (item: ShoppingListItem, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === item.name) return;
+    await updateListItemName(db, item.id, trimmed);
+  };
+
+  const handleDelete = async (item: ShoppingListItem) => {
+    await deleteListItem(db, item.id);
+    await load();
+  };
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <FlatList
+        data={items}
+        keyExtractor={(item) => String(item.id)}
+        contentContainerStyle={items.length === 0 ? styles.emptyContainer : undefined}
+        ListEmptyComponent={<Text style={styles.emptyText}>Adicione itens à sua lista.</Text>}
+        renderItem={({ item }) => (
+          <View style={styles.itemRow}>
+            <Pressable style={styles.checkbox} onPress={() => handleToggle(item)}>
+              <View style={[styles.checkboxBox, item.checked && styles.checkboxBoxChecked]}>
+                {item.checked && <Text style={styles.checkboxMark}>✓</Text>}
+              </View>
+            </Pressable>
+            <TextInput
+              style={[styles.itemInput, item.checked && styles.itemInputChecked]}
+              value={item.name}
+              onChangeText={(text) => handleRename(item, text)}
+              onEndEditing={(e) => handleRenameCommit(item, e.nativeEvent.text)}
+            />
+            <Pressable onPress={() => handleDelete(item)} style={styles.deleteButton}>
+              <Text style={styles.deleteButtonText}>✕</Text>
+            </Pressable>
+          </View>
+        )}
+      />
+
+      <View style={styles.addRow}>
+        <TextInput
+          style={styles.addInput}
+          placeholder="Novo item"
+          value={newItemName}
+          onChangeText={setNewItemName}
+          onSubmitEditing={handleAdd}
+          returnKeyType="done"
+        />
+        <Pressable style={styles.addButton} onPress={handleAdd}>
+          <Text style={styles.addButtonText}>Adicionar</Text>
+        </Pressable>
+      </View>
+
+      <Pressable
+        style={styles.closeButton}
+        onPress={() => navigation.navigate('Scan', { listId })}
+      >
+        <Text style={styles.closeButtonText}>Fechar compra</Text>
+      </Pressable>
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#fff' },
+  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  emptyText: { color: '#6b7280', fontSize: 16 },
+  itemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  checkbox: { padding: 4 },
+  checkboxBox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#9ca3af',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxBoxChecked: { backgroundColor: '#16a34a', borderColor: '#16a34a' },
+  checkboxMark: { color: '#fff', fontWeight: '700' },
+  itemInput: { flex: 1, fontSize: 16, marginLeft: 10, color: '#111827' },
+  itemInputChecked: { color: '#9ca3af', textDecorationLine: 'line-through' },
+  deleteButton: { padding: 8 },
+  deleteButtonText: { color: '#ef4444', fontSize: 16 },
+  addRow: {
+    flexDirection: 'row',
+    padding: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+  },
+  addInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 16,
+  },
+  addButton: {
+    marginLeft: 8,
+    backgroundColor: '#2563eb',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    justifyContent: 'center',
+  },
+  addButtonText: { color: '#fff', fontWeight: '700' },
+  closeButton: {
+    backgroundColor: '#16a34a',
+    margin: 16,
+    marginTop: 4,
+    paddingVertical: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  closeButtonText: { color: '#fff', fontSize: 17, fontWeight: '700' },
+});
