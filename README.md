@@ -36,6 +36,10 @@ Todo push nas branches `main` ou `claude/**` dispara um build automático de um 
 - O build roda na nuvem da Expo (leva alguns minutos). O link de download do APK aparece no painel [expo.dev](https://expo.dev) (projeto `kompras`, aba Builds) e nos logs do job do GitHub Actions.
 - Instale o APK direto no celular Android (é preciso permitir "instalar de fontes desconhecidas" na primeira vez).
 
+**Se o job falhar avisando que EXPO_TOKEN não está configurado:** siga os passos 1–3 acima.
+
+**Se sua conta Expo tiver acesso a múltiplas organizações/contas:** o `eas init` automático vai pedir para escolher uma explicitamente. Nesse caso, edite `.github/workflows/eas-build.yml` e adicione `--account <nome-da-conta>` ao comando `eas init`.
+
 ## Funcionalidades (Fase 0)
 
 1. **Lista de compras** — criar, editar e excluir itens (nome livre); persiste localmente.

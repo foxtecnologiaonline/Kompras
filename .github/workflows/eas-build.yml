@@ -24,10 +24,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check EXPO_TOKEN secret
+        if: ${{ secrets.EXPO_TOKEN == '' }}
+        run: |
+          echo "::error::Secret EXPO_TOKEN não configurado neste repositório. Veja o README (seção 'Build de teste automático') para criar o token em expo.dev e adicioná-lo em Settings → Secrets and variables → Actions."
+          exit 1
+
       - name: Setup Expo & EAS
-        uses: expo/expo-github-action@v8
+        uses: expo/expo-github-action@v9
         with:
           eas-version: latest
+          packager: npm
           token: ${{ secrets.EXPO_TOKEN }}
 
       - name: Link EAS project (idempotent)
