@@ -27,7 +27,8 @@ export default function ScanScreen({ route, navigation }: Props) {
   const [stage, setStage] = useState<Stage>('scanning');
   const [errorMessage, setErrorMessage] = useState('');
   const [manualTotal, setManualTotal] = useState('');
-  const handledRef = useRef(false);
+  const scanLockRef = useRef(false); // guards continuous live barcode scanning only
+  const actionLockRef = useRef(false); // guards the single-tap "tirar foto" / "galeria" actions
   const cameraRef = useRef<CameraView>(null);
 
   /** Shared pipeline: a decoded QR string -> fetch the NFC-e page -> parse -> save. */
@@ -56,17 +57,17 @@ export default function ScanScreen({ route, navigation }: Props) {
   };
 
   const handleBarcodeScanned = async ({ data }: { data: string }) => {
-    if (handledRef.current) return;
-    handledRef.current = true;
+    if (scanLockRef.current) return;
+    scanLockRef.current = true;
     setStage('processing');
     await processQrData(data);
   };
 
   const handleTakePhoto = async () => {
-    if (handledRef.current) return;
-    handledRef.current = true;
-    setStage('processing');
+    if (actionLockRef.current) return;
+    actionLockRef.current = true;
     try {
+      setStage('processing');
       const photo = await cameraRef.current?.takePictureAsync({ quality: 0.6 });
       if (!photo) throw new Error('Não foi possível capturar a foto.');
       const results = await scanFromURLAsync(photo.uri, ['qr']);
@@ -79,19 +80,20 @@ export default function ScanScreen({ route, navigation }: Props) {
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Erro ao processar a foto.');
       setStage('error');
+    } finally {
+      actionLockRef.current = false;
     }
   };
 
   const handlePickImage = async () => {
-    if (handledRef.current) return;
-    handledRef.current = true;
+    if (actionLockRef.current) return;
+    actionLockRef.current = true;
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
         quality: 1,
       });
       if (result.canceled || result.assets.length === 0) {
-        handledRef.current = false;
         return;
       }
       setStage('processing');
@@ -105,6 +107,8 @@ export default function ScanScreen({ route, navigation }: Props) {
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Erro ao processar a imagem.');
       setStage('error');
+    } finally {
+      actionLockRef.current = false;
     }
   };
 
@@ -127,7 +131,7 @@ export default function ScanScreen({ route, navigation }: Props) {
   };
 
   const retryScan = () => {
-    handledRef.current = false;
+    scanLockRef.current = false;
     setErrorMessage('');
     setStage('scanning');
   };
