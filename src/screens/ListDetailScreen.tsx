@@ -18,6 +18,7 @@ import {
   addListItems,
   deleteListItem,
   getListItems,
+  getShoppingList,
   setListItemChecked,
   updateListItemName,
   updateListItemQuantity,
@@ -33,9 +34,13 @@ export default function ListDetailScreen({ route, navigation }: Props) {
   const newItemInputRef = useRef<TextInput>(null);
 
   const load = useCallback(async () => {
-    const rows = await getListItems(db, listId);
+    const [rows, list] = await Promise.all([getListItems(db, listId), getShoppingList(db, listId)]);
     setItems(rows);
-  }, [db, listId]);
+    if (list) {
+      const title = list.name?.trim() || `Lista de ${new Date(list.created_at).toLocaleDateString('pt-BR')}`;
+      navigation.setOptions({ title });
+    }
+  }, [db, listId, navigation]);
 
   useFocusEffect(
     useCallback(() => {

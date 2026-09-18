@@ -56,5 +56,10 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase): Promise<void> {
     version = 3;
   }
 
+  if (version < 4) {
+    await db.execAsync('ALTER TABLE shopping_list ADD COLUMN name TEXT;');
+    version = 4;
+  }
+
   await db.execAsync(`PRAGMA user_version = ${version};`);
 }

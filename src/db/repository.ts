@@ -10,10 +10,14 @@ import type {
 
 // ---- shopping_list ----
 
-export async function createShoppingList(db: SQLiteDatabase): Promise<number> {
+export async function createShoppingList(
+  db: SQLiteDatabase,
+  name: string | null = null
+): Promise<number> {
   const result = await db.runAsync(
-    'INSERT INTO shopping_list (created_at) VALUES (?)',
-    new Date().toISOString()
+    'INSERT INTO shopping_list (created_at, name) VALUES (?, ?)',
+    new Date().toISOString(),
+    name
   );
   return result.lastInsertRowId;
 }
@@ -22,6 +26,21 @@ export async function getShoppingLists(db: SQLiteDatabase): Promise<ShoppingList
   return db.getAllAsync<ShoppingList>(
     'SELECT * FROM shopping_list ORDER BY created_at DESC'
   );
+}
+
+export async function getShoppingList(
+  db: SQLiteDatabase,
+  listId: number
+): Promise<ShoppingList | null> {
+  return db.getFirstAsync<ShoppingList>('SELECT * FROM shopping_list WHERE id = ?', listId);
+}
+
+export async function updateShoppingListName(
+  db: SQLiteDatabase,
+  listId: number,
+  name: string | null
+): Promise<void> {
+  await db.runAsync('UPDATE shopping_list SET name = ? WHERE id = ?', name, listId);
 }
 
 export async function deleteShoppingList(db: SQLiteDatabase, listId: number): Promise<void> {
