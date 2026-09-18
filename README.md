@@ -19,6 +19,23 @@ npm start
 
 Abra no dispositivo com o app Expo Go (Android/iOS) ou em um emulador.
 
+## Build de teste automático (APK via EAS Build)
+
+Todo push nas branches `main` ou `claude/**` dispara um build automático de um APK Android instalável, via GitHub Actions + EAS Build. Não precisa de máquina local nem de Expo Go — é um instalador de verdade.
+
+**Configuração única (uma vez só):**
+
+1. Crie uma conta gratuita em [expo.dev](https://expo.dev).
+2. Gere um access token em [expo.dev/accounts/[sua-conta]/settings/access-tokens](https://expo.dev/accounts/settings/access-tokens).
+3. No GitHub, vá em **Settings → Secrets and variables → Actions** deste repositório e crie um secret chamado `EXPO_TOKEN` com o valor do token.
+
+**Depois disso:**
+
+- Qualquer push nas branches monitoradas dispara o workflow `.github/workflows/eas-build.yml` automaticamente.
+- Também dá pra disparar manualmente em **Actions → EAS Build (Android preview APK) → Run workflow**.
+- O build roda na nuvem da Expo (leva alguns minutos). O link de download do APK aparece no painel [expo.dev](https://expo.dev) (projeto `kompras`, aba Builds) e nos logs do job do GitHub Actions.
+- Instale o APK direto no celular Android (é preciso permitir "instalar de fontes desconhecidas" na primeira vez).
+
 ## Funcionalidades (Fase 0)
 
 1. **Lista de compras** — criar, editar e excluir itens (nome livre); persiste localmente.

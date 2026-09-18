@@ -8,11 +8,13 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "br.com.foxtecnologia.kompras",
       "infoPlist": {
         "NSCameraUsageDescription": "A câmera é usada para escanear o QR Code do cupom fiscal (NFC-e)."
       }
     },
     "android": {
+      "package": "br.com.foxtecnologia.kompras",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
