@@ -5,6 +5,8 @@ import ListDetailScreen from '../screens/ListDetailScreen';
 import ScanScreen from '../screens/ScanScreen';
 import HistoryScreen from '../screens/HistoryScreen';
 import HistoryDetailScreen from '../screens/HistoryDetailScreen';
+import ListReportScreen from '../screens/ListReportScreen';
+import ListVsReceiptScreen from '../screens/ListVsReceiptScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -27,6 +29,16 @@ export default function RootNavigator() {
         name="HistoryDetail"
         component={HistoryDetailScreen}
         options={{ title: 'Detalhe da Compra' }}
+      />
+      <Stack.Screen
+        name="ListReport"
+        component={ListReportScreen}
+        options={{ title: 'Relatório da Lista' }}
+      />
+      <Stack.Screen
+        name="ListVsReceipt"
+        component={ListVsReceiptScreen}
+        options={{ title: 'Lista x Cupom' }}
       />
     </Stack.Navigator>
   );

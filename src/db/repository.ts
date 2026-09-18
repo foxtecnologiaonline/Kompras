@@ -178,3 +178,17 @@ export async function getPurchaseItems(
     purchaseId
   );
 }
+
+/** All items from every receipt (purchase) linked to a shopping list. */
+export async function getPurchaseItemsForList(
+  db: SQLiteDatabase,
+  listId: number
+): Promise<PurchaseItem[]> {
+  return db.getAllAsync<PurchaseItem>(
+    `SELECT pi.* FROM purchase_item pi
+     JOIN purchase p ON p.id = pi.purchase_id
+     WHERE p.list_id = ?
+     ORDER BY pi.id ASC`,
+    listId
+  );
+}

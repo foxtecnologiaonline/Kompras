@@ -40,4 +40,6 @@ export type RootStackParamList = {
   Scan: { listId: number };
   History: undefined;
   HistoryDetail: { purchaseId: number };
+  ListReport: { listId: number };
+  ListVsReceipt: { listId: number };
 };

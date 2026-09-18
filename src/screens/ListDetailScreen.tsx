@@ -160,6 +160,21 @@ export default function ListDetailScreen({ route, navigation }: Props) {
         </Pressable>
       </View>
 
+      <View style={styles.reportRow}>
+        <Pressable
+          style={styles.reportButton}
+          onPress={() => navigation.navigate('ListReport', { listId })}
+        >
+          <Text style={styles.reportButtonText}>Relatório da lista</Text>
+        </Pressable>
+        <Pressable
+          style={styles.reportButton}
+          onPress={() => navigation.navigate('ListVsReceipt', { listId })}
+        >
+          <Text style={styles.reportButtonText}>Lista x Cupom</Text>
+        </Pressable>
+      </View>
+
       <Pressable
         style={styles.closeButton}
         onPress={() => navigation.navigate('Scan', { listId })}
@@ -234,6 +249,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   addButtonText: { color: '#fff', fontWeight: '700' },
+  reportRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 16,
+  },
+  reportButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#2563eb',
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  reportButtonText: { color: '#2563eb', fontWeight: '600' },
   closeButton: {
     backgroundColor: '#16a34a',
     margin: 16,
