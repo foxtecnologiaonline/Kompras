@@ -235,7 +235,11 @@ export default function ScanScreen({ route, navigation }: Props) {
 
         {receiptPhotoUri ? (
           <View style={styles.photoPreviewRow}>
-            <Image source={{ uri: receiptPhotoUri }} style={styles.photoPreview} />
+            <Image
+              source={{ uri: receiptPhotoUri }}
+              style={styles.photoPreview}
+              resizeMode="contain"
+            />
             <Pressable onPress={() => setReceiptPhotoUri(null)}>
               <Text style={styles.secondaryButtonText}>Remover foto</Text>
             </Pressable>

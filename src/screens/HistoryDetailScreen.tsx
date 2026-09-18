@@ -42,7 +42,11 @@ export default function HistoryDetailScreen({ route }: Props) {
           <Text style={styles.note}>Valor informado manualmente (cupom não pôde ser lido)</Text>
         )}
         {purchase.receipt_photo_uri && (
-          <Image source={{ uri: purchase.receipt_photo_uri }} style={styles.receiptPhoto} />
+          <Image
+            source={{ uri: purchase.receipt_photo_uri }}
+            style={styles.receiptPhoto}
+            resizeMode="contain"
+          />
         )}
       </View>
 
