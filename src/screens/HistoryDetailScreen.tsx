@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { FlatList, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Image, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -40,6 +40,9 @@ export default function HistoryDetailScreen({ route }: Props) {
         <Text style={styles.total}>{formatCurrency(purchase.total_value)}</Text>
         {purchase.raw_source === 'manual_fallback' && (
           <Text style={styles.note}>Valor informado manualmente (cupom não pôde ser lido)</Text>
+        )}
+        {purchase.receipt_photo_uri && (
+          <Image source={{ uri: purchase.receipt_photo_uri }} style={styles.receiptPhoto} />
         )}
       </View>
 
@@ -84,6 +87,13 @@ const styles = StyleSheet.create({
   date: { fontSize: 16, color: '#6b7280' },
   total: { fontSize: 28, fontWeight: '700', color: '#111827', marginTop: 4 },
   note: { fontSize: 13, color: '#b45309', marginTop: 6 },
+  receiptPhoto: {
+    width: '100%',
+    height: 220,
+    borderRadius: 8,
+    marginTop: 12,
+    backgroundColor: '#f3f4f6',
+  },
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { color: '#6b7280', fontSize: 16, padding: 20, textAlign: 'center' },
   itemRow: {

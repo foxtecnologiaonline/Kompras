@@ -19,6 +19,7 @@ export interface Purchase {
   purchase_date: string;
   total_value: number;
   raw_source: PurchaseSource;
+  receipt_photo_uri: string | null;
 }
 
 export interface PurchaseWithCount extends Purchase {

@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import {
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -21,6 +22,7 @@ import {
   parseNfceHtml,
   stripScriptsAndStyles,
 } from '../utils/nfce';
+import { persistReceiptPhoto } from '../utils/receiptPhoto';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Scan'>;
 
@@ -34,6 +36,7 @@ export default function ScanScreen({ route, navigation }: Props) {
   const [errorMessage, setErrorMessage] = useState('');
   const [manualTotal, setManualTotal] = useState('');
   const [debugHtml, setDebugHtml] = useState<string | null>(null);
+  const [receiptPhotoUri, setReceiptPhotoUri] = useState<string | null>(null);
   const scanLockRef = useRef(false); // guards continuous live barcode scanning only
   const actionLockRef = useRef(false); // guards the single-tap "tirar foto" / "galeria" actions
   const cameraRef = useRef<CameraView>(null);
@@ -133,6 +136,29 @@ export default function ScanScreen({ route, navigation }: Props) {
     }
   };
 
+  const handleAttachPhotoFromCamera = async () => {
+    try {
+      const result = await ImagePicker.launchCameraAsync({ quality: 0.7 });
+      if (result.canceled || result.assets.length === 0) return;
+      setReceiptPhotoUri(result.assets[0].uri);
+    } catch {
+      // camera unavailable or permission denied — user just stays without a photo attached
+    }
+  };
+
+  const handleAttachPhotoFromGallery = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 1,
+      });
+      if (result.canceled || result.assets.length === 0) return;
+      setReceiptPhotoUri(result.assets[0].uri);
+    } catch {
+      // gallery unavailable or permission denied — user just stays without a photo attached
+    }
+  };
+
   const handleManualSave = async () => {
     const total = parseFloat(manualTotal.replace(',', '.'));
     if (!Number.isFinite(total) || total <= 0) {
@@ -141,12 +167,21 @@ export default function ScanScreen({ route, navigation }: Props) {
     }
     setErrorMessage('');
     setStage('saving');
+    let persistedPhotoUri: string | null = null;
+    if (receiptPhotoUri) {
+      try {
+        persistedPhotoUri = await persistReceiptPhoto(receiptPhotoUri);
+      } catch {
+        // couldn't persist the photo — still save the purchase with the total the user typed
+      }
+    }
     const purchaseId = await createPurchase(
       db,
       listId,
       new Date().toISOString(),
       total,
-      'manual_fallback'
+      'manual_fallback',
+      persistedPhotoUri
     );
     navigation.replace('HistoryDetail', { purchaseId });
   };
@@ -160,6 +195,7 @@ export default function ScanScreen({ route, navigation }: Props) {
 
   const goToManual = () => {
     setErrorMessage('');
+    setReceiptPhotoUri(null);
     setStage('manual');
   };
 
@@ -196,6 +232,25 @@ export default function ScanScreen({ route, navigation }: Props) {
           onChangeText={setManualTotal}
         />
         {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+
+        {receiptPhotoUri ? (
+          <View style={styles.photoPreviewRow}>
+            <Image source={{ uri: receiptPhotoUri }} style={styles.photoPreview} />
+            <Pressable onPress={() => setReceiptPhotoUri(null)}>
+              <Text style={styles.secondaryButtonText}>Remover foto</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <View style={styles.attachPhotoRow}>
+            <Pressable style={styles.attachPhotoButton} onPress={handleAttachPhotoFromCamera}>
+              <Text style={styles.attachPhotoButtonText}>📷 Fotografar cupom</Text>
+            </Pressable>
+            <Pressable style={styles.attachPhotoButton} onPress={handleAttachPhotoFromGallery}>
+              <Text style={styles.attachPhotoButtonText}>🖼️ Da galeria</Text>
+            </Pressable>
+          </View>
+        )}
+
         <Pressable style={styles.primaryButton} onPress={handleManualSave}>
           <Text style={styles.primaryButtonText}>Salvar compra</Text>
         </Pressable>
@@ -272,6 +327,27 @@ const styles = StyleSheet.create({
   title: { fontSize: 20, fontWeight: '700', marginBottom: 8, textAlign: 'center' },
   message: { fontSize: 16, color: '#374151', textAlign: 'center', marginBottom: 20 },
   errorText: { fontSize: 14, color: '#ef4444', textAlign: 'center', marginTop: -12, marginBottom: 16 },
+  attachPhotoRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 20,
+  },
+  attachPhotoButton: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  attachPhotoButtonText: { color: '#374151', fontSize: 14, fontWeight: '600' },
+  photoPreviewRow: { alignItems: 'center', marginBottom: 20 },
+  photoPreview: {
+    width: 160,
+    height: 160,
+    borderRadius: 8,
+    marginBottom: 8,
+    backgroundColor: '#f3f4f6',
+  },
   input: {
     borderWidth: 1,
     borderColor: '#d1d5db',

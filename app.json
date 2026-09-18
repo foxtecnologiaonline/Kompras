@@ -36,7 +36,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Usado para escolher uma foto que contenha o QR Code do cupom fiscal (NFC-e)."
+          "photosPermission": "Usado para escolher uma foto do cupom fiscal ou do QR Code.",
+          "cameraPermission": "A câmera é usada para fotografar o cupom fiscal ou o QR Code."
         }
       ],
       [

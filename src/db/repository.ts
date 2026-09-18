@@ -122,14 +122,16 @@ export async function createPurchase(
   listId: number | null,
   purchaseDate: string,
   totalValue: number,
-  rawSource: PurchaseSource
+  rawSource: PurchaseSource,
+  receiptPhotoUri: string | null = null
 ): Promise<number> {
   const result = await db.runAsync(
-    'INSERT INTO purchase (list_id, purchase_date, total_value, raw_source) VALUES (?, ?, ?, ?)',
+    'INSERT INTO purchase (list_id, purchase_date, total_value, raw_source, receipt_photo_uri) VALUES (?, ?, ?, ?, ?)',
     listId,
     purchaseDate,
     totalValue,
-    rawSource
+    rawSource,
+    receiptPhotoUri
   );
   return result.lastInsertRowId;
 }
