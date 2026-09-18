@@ -1,5 +1,13 @@
 import { useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useSQLiteContext } from 'expo-sqlite';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -94,7 +102,10 @@ export default function ScanScreen({ route, navigation }: Props) {
 
   if (stage === 'manual') {
     return (
-      <View style={styles.centerContainer}>
+      <KeyboardAvoidingView
+        style={styles.centerContainer}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
         <Text style={styles.title}>Informe o valor total</Text>
         <Text style={styles.message}>
           Não conseguimos ler o cupom automaticamente. Digite o valor total da compra.
@@ -110,7 +121,7 @@ export default function ScanScreen({ route, navigation }: Props) {
         <Pressable style={styles.primaryButton} onPress={handleManualSave}>
           <Text style={styles.primaryButtonText}>Salvar compra</Text>
         </Pressable>
-      </View>
+      </KeyboardAvoidingView>
     );
   }
 
