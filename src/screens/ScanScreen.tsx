@@ -8,7 +8,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraView, scanFromURLAsync, useCameraPermissions } from 'expo-camera';
+import * as ImagePicker from 'expo-image-picker';
 import { useSQLiteContext } from 'expo-sqlite';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types';
@@ -27,12 +28,10 @@ export default function ScanScreen({ route, navigation }: Props) {
   const [errorMessage, setErrorMessage] = useState('');
   const [manualTotal, setManualTotal] = useState('');
   const handledRef = useRef(false);
+  const cameraRef = useRef<CameraView>(null);
 
-  const handleBarcodeScanned = async ({ data }: { data: string }) => {
-    if (handledRef.current) return;
-    handledRef.current = true;
-    setStage('processing');
-
+  /** Shared pipeline: a decoded QR string -> fetch the NFC-e page -> parse -> save. */
+  const processQrData = async (data: string) => {
     try {
       const url = extractUrlFromQrData(data);
       const html = await fetchNfceHtml(url);
@@ -52,6 +51,59 @@ export default function ScanScreen({ route, navigation }: Props) {
       navigation.replace('HistoryDetail', { purchaseId });
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Erro ao processar o cupom.');
+      setStage('error');
+    }
+  };
+
+  const handleBarcodeScanned = async ({ data }: { data: string }) => {
+    if (handledRef.current) return;
+    handledRef.current = true;
+    setStage('processing');
+    await processQrData(data);
+  };
+
+  const handleTakePhoto = async () => {
+    if (handledRef.current) return;
+    handledRef.current = true;
+    setStage('processing');
+    try {
+      const photo = await cameraRef.current?.takePictureAsync({ quality: 0.6 });
+      if (!photo) throw new Error('Não foi possível capturar a foto.');
+      const results = await scanFromURLAsync(photo.uri, ['qr']);
+      if (results.length === 0) {
+        setErrorMessage('Não encontramos nenhum QR Code nessa foto. Tente aproximar mais.');
+        setStage('error');
+        return;
+      }
+      await processQrData(results[0].data);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Erro ao processar a foto.');
+      setStage('error');
+    }
+  };
+
+  const handlePickImage = async () => {
+    if (handledRef.current) return;
+    handledRef.current = true;
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 1,
+      });
+      if (result.canceled || result.assets.length === 0) {
+        handledRef.current = false;
+        return;
+      }
+      setStage('processing');
+      const results = await scanFromURLAsync(result.assets[0].uri, ['qr']);
+      if (results.length === 0) {
+        setErrorMessage('Não encontramos nenhum QR Code nessa imagem.');
+        setStage('error');
+        return;
+      }
+      await processQrData(results[0].data);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Erro ao processar a imagem.');
       setStage('error');
     }
   };
@@ -133,6 +185,9 @@ export default function ScanScreen({ route, navigation }: Props) {
         <Pressable style={styles.primaryButton} onPress={retryScan}>
           <Text style={styles.primaryButtonText}>Tentar novamente</Text>
         </Pressable>
+        <Pressable style={styles.secondaryButton} onPress={handlePickImage}>
+          <Text style={styles.secondaryButtonText}>Escolher imagem da galeria</Text>
+        </Pressable>
         <Pressable style={styles.secondaryButton} onPress={goToManual}>
           <Text style={styles.secondaryButtonText}>Informar valor manualmente</Text>
         </Pressable>
@@ -151,14 +206,23 @@ export default function ScanScreen({ route, navigation }: Props) {
   return (
     <View style={styles.container}>
       <CameraView
+        ref={cameraRef}
         style={StyleSheet.absoluteFill}
         barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
         onBarcodeScanned={handleBarcodeScanned}
       />
       <View style={styles.overlay}>
         <Text style={styles.overlayText}>Aponte a câmera para o QR Code do cupom fiscal</Text>
+        <View style={styles.overlayButtonRow}>
+          <Pressable style={styles.overlayButton} onPress={handleTakePhoto}>
+            <Text style={styles.overlayButtonText}>Tirar foto</Text>
+          </Pressable>
+          <Pressable style={styles.overlayButton} onPress={handlePickImage}>
+            <Text style={styles.overlayButtonText}>Escolher da galeria</Text>
+          </Pressable>
+        </View>
         <Pressable style={styles.secondaryButton} onPress={goToManual}>
-          <Text style={styles.secondaryButtonText}>Informar valor manualmente</Text>
+          <Text style={styles.secondaryButtonTextLight}>Informar valor manualmente</Text>
         </Pressable>
       </View>
     </View>
@@ -199,6 +263,7 @@ const styles = StyleSheet.create({
   primaryButtonText: { color: '#fff', fontSize: 17, fontWeight: '700' },
   secondaryButton: { marginTop: 14, padding: 10 },
   secondaryButtonText: { color: '#2563eb', fontSize: 15, fontWeight: '600' },
+  secondaryButtonTextLight: { color: '#93c5fd', fontSize: 15, fontWeight: '600' },
   overlay: {
     position: 'absolute',
     bottom: 0,
@@ -209,4 +274,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   overlayText: { color: '#fff', fontSize: 16, textAlign: 'center' },
+  overlayButtonRow: {
+    flexDirection: 'row',
+    marginTop: 16,
+    gap: 12,
+  },
+  overlayButton: {
+    borderWidth: 1,
+    borderColor: '#fff',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  overlayButtonText: { color: '#fff', fontSize: 14, fontWeight: '600' },
 });
