@@ -40,6 +40,8 @@ Todo push nas branches `main` ou `claude/**` dispara um build automático de um 
 
 **Se sua conta Expo tiver acesso a múltiplas organizações/contas:** o `eas init` automático vai pedir para escolher uma explicitamente. Nesse caso, edite `.github/workflows/eas-build.yml` e adicione `--account <nome-da-conta>` ao comando `eas init`.
 
+**Tamanho do APK:** o profile `preview` do `eas.json` restringe o build às arquiteturas `arm64-v8a`/`armeabi-v7a` (cobre praticamente todo celular Android real; `x86`/`x86_64` só servem para emulador) e liga minificação (R8) + shrink de recursos no `app.json` via `expo-build-properties`, o que reduz bastante o tamanho do APK final em relação a um build universal sem otimização.
+
 ## Funcionalidades (Fase 0)
 
 1. **Lista de compras** — criar, editar e excluir itens (nome livre); persiste localmente.

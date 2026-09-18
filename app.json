@@ -32,6 +32,16 @@
         {
           "cameraPermission": "A câmera é usada para escanear o QR Code do cupom fiscal (NFC-e)."
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "enablePngCrunchInReleaseBuilds": true
+          }
+        }
       ]
     ]
   }
