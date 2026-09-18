@@ -3,6 +3,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -14,7 +15,12 @@ import { useSQLiteContext } from 'expo-sqlite';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types';
 import { addPurchaseItem, createPurchase } from '../db/repository';
-import { extractUrlFromQrData, fetchNfceHtml, parseNfceHtml } from '../utils/nfce';
+import {
+  extractUrlFromQrData,
+  fetchNfceHtml,
+  parseNfceHtml,
+  stripScriptsAndStyles,
+} from '../utils/nfce';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Scan'>;
 
@@ -27,15 +33,17 @@ export default function ScanScreen({ route, navigation }: Props) {
   const [stage, setStage] = useState<Stage>('scanning');
   const [errorMessage, setErrorMessage] = useState('');
   const [manualTotal, setManualTotal] = useState('');
+  const [debugHtml, setDebugHtml] = useState<string | null>(null);
   const scanLockRef = useRef(false); // guards continuous live barcode scanning only
   const actionLockRef = useRef(false); // guards the single-tap "tirar foto" / "galeria" actions
   const cameraRef = useRef<CameraView>(null);
 
   /** Shared pipeline: a decoded QR string -> fetch the NFC-e page -> parse -> save. */
   const processQrData = async (data: string) => {
+    let html: string | undefined;
     try {
       const url = extractUrlFromQrData(data);
-      const html = await fetchNfceHtml(url);
+      html = await fetchNfceHtml(url);
       const parsed = parseNfceHtml(html);
 
       const purchaseId = await createPurchase(
@@ -52,13 +60,24 @@ export default function ScanScreen({ route, navigation }: Props) {
       navigation.replace('HistoryDetail', { purchaseId });
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Erro ao processar o cupom.');
+      setDebugHtml(html ? stripScriptsAndStyles(html) : null);
       setStage('error');
+    }
+  };
+
+  const handleShareDebugHtml = async () => {
+    if (!debugHtml) return;
+    try {
+      await Share.share({ message: debugHtml });
+    } catch {
+      // user dismissed the share sheet or it failed silently — nothing to recover here
     }
   };
 
   const handleBarcodeScanned = async ({ data }: { data: string }) => {
     if (scanLockRef.current) return;
     scanLockRef.current = true;
+    setDebugHtml(null);
     setStage('processing');
     await processQrData(data);
   };
@@ -66,6 +85,7 @@ export default function ScanScreen({ route, navigation }: Props) {
   const handleTakePhoto = async () => {
     if (actionLockRef.current) return;
     actionLockRef.current = true;
+    setDebugHtml(null);
     try {
       setStage('processing');
       const photo = await cameraRef.current?.takePictureAsync({ quality: 0.6 });
@@ -88,6 +108,7 @@ export default function ScanScreen({ route, navigation }: Props) {
   const handlePickImage = async () => {
     if (actionLockRef.current) return;
     actionLockRef.current = true;
+    setDebugHtml(null);
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
@@ -133,6 +154,7 @@ export default function ScanScreen({ route, navigation }: Props) {
   const retryScan = () => {
     scanLockRef.current = false;
     setErrorMessage('');
+    setDebugHtml(null);
     setStage('scanning');
   };
 
@@ -195,6 +217,11 @@ export default function ScanScreen({ route, navigation }: Props) {
         <Pressable style={styles.secondaryButton} onPress={goToManual}>
           <Text style={styles.secondaryButtonText}>Informar valor manualmente</Text>
         </Pressable>
+        {debugHtml && (
+          <Pressable style={styles.secondaryButton} onPress={handleShareDebugHtml}>
+            <Text style={styles.debugButtonText}>Compartilhar dados técnicos (depuração)</Text>
+          </Pressable>
+        )}
       </View>
     );
   }
@@ -268,6 +295,7 @@ const styles = StyleSheet.create({
   secondaryButton: { marginTop: 14, padding: 10 },
   secondaryButtonText: { color: '#2563eb', fontSize: 15, fontWeight: '600' },
   secondaryButtonTextLight: { color: '#93c5fd', fontSize: 15, fontWeight: '600' },
+  debugButtonText: { color: '#9ca3af', fontSize: 13, fontWeight: '500' },
   overlay: {
     position: 'absolute',
     bottom: 0,

@@ -31,6 +31,15 @@ export async function fetchNfceHtml(url: string): Promise<string> {
   return response.text();
 }
 
+/** Trims boilerplate (scripts/styles) so the raw HTML is small enough to share for debugging. */
+export function stripScriptsAndStyles(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/\n\s*\n/g, '\n')
+    .trim();
+}
+
 function stripTags(html: string): string {
   return html
     .replace(/<[^>]+>/g, ' ')
