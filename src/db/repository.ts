@@ -40,6 +40,7 @@ export async function getListItems(
     id: number;
     list_id: number;
     name: string;
+    quantity: number;
     checked: number;
   }>('SELECT * FROM shopping_list_item WHERE list_id = ? ORDER BY id ASC', listId);
   return rows.map((r) => ({ ...r, checked: !!r.checked }));
@@ -48,14 +49,34 @@ export async function getListItems(
 export async function addListItem(
   db: SQLiteDatabase,
   listId: number,
-  name: string
+  name: string,
+  quantity: number = 1
 ): Promise<number> {
   const result = await db.runAsync(
-    'INSERT INTO shopping_list_item (list_id, name, checked) VALUES (?, ?, 0)',
+    'INSERT INTO shopping_list_item (list_id, name, quantity, checked) VALUES (?, ?, ?, 0)',
     listId,
-    name
+    name,
+    quantity
   );
   return result.lastInsertRowId;
+}
+
+/** Inserts several items in one transaction (e.g. pasting a multi-line list). */
+export async function addListItems(
+  db: SQLiteDatabase,
+  listId: number,
+  names: string[]
+): Promise<void> {
+  if (names.length === 0) return;
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    for (const name of names) {
+      await txn.runAsync(
+        'INSERT INTO shopping_list_item (list_id, name, quantity, checked) VALUES (?, ?, 1, 0)',
+        listId,
+        name
+      );
+    }
+  });
 }
 
 export async function updateListItemName(
@@ -64,6 +85,18 @@ export async function updateListItemName(
   name: string
 ): Promise<void> {
   await db.runAsync('UPDATE shopping_list_item SET name = ? WHERE id = ?', name, itemId);
+}
+
+export async function updateListItemQuantity(
+  db: SQLiteDatabase,
+  itemId: number,
+  quantity: number
+): Promise<void> {
+  await db.runAsync(
+    'UPDATE shopping_list_item SET quantity = ? WHERE id = ?',
+    quantity,
+    itemId
+  );
 }
 
 export async function setListItemChecked(

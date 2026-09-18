@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -15,10 +15,12 @@ import { useSQLiteContext } from 'expo-sqlite';
 import type { RootStackParamList, ShoppingListItem } from '../types';
 import {
   addListItem,
+  addListItems,
   deleteListItem,
   getListItems,
   setListItemChecked,
   updateListItemName,
+  updateListItemQuantity,
 } from '../db/repository';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ListDetail'>;
@@ -28,6 +30,7 @@ export default function ListDetailScreen({ route, navigation }: Props) {
   const db = useSQLiteContext();
   const [items, setItems] = useState<ShoppingListItem[]>([]);
   const [newItemName, setNewItemName] = useState('');
+  const newItemInputRef = useRef<TextInput>(null);
 
   const load = useCallback(async () => {
     const rows = await getListItems(db, listId);
@@ -46,6 +49,29 @@ export default function ListDetailScreen({ route, navigation }: Props) {
     await addListItem(db, listId, name);
     setNewItemName('');
     await load();
+    newItemInputRef.current?.focus();
+  };
+
+  /**
+   * A newline in the field means either Enter after typing one item, or a
+   * multi-line list pasted in. Either way: every non-empty line becomes an
+   * item, added in one shot, and the keyboard stays open for the next one.
+   */
+  const handleNewItemChangeText = async (text: string) => {
+    if (!text.includes('\n')) {
+      setNewItemName(text);
+      return;
+    }
+    const names = text
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    setNewItemName('');
+    if (names.length > 0) {
+      await addListItems(db, listId, names);
+      await load();
+    }
+    newItemInputRef.current?.focus();
   };
 
   const handleToggle = async (item: ShoppingListItem) => {
@@ -53,7 +79,7 @@ export default function ListDetailScreen({ route, navigation }: Props) {
     await load();
   };
 
-  const handleRename = async (item: ShoppingListItem, name: string) => {
+  const handleRename = (item: ShoppingListItem, name: string) => {
     setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, name } : i)));
   };
 
@@ -61,6 +87,19 @@ export default function ListDetailScreen({ route, navigation }: Props) {
     const trimmed = name.trim();
     if (!trimmed || trimmed === item.name) return;
     await updateListItemName(db, item.id, trimmed);
+  };
+
+  const handleQuantityChange = (item: ShoppingListItem, text: string) => {
+    const sanitized = text.replace(/[^0-9]/g, '');
+    setItems((prev) =>
+      prev.map((i) => (i.id === item.id ? { ...i, quantity: sanitized === '' ? 0 : Number(sanitized) } : i))
+    );
+  };
+
+  const handleQuantityCommit = async (item: ShoppingListItem) => {
+    const quantity = item.quantity > 0 ? item.quantity : 1;
+    setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, quantity } : i)));
+    await updateListItemQuantity(db, item.id, quantity);
   };
 
   const handleDelete = async (item: ShoppingListItem) => {
@@ -91,6 +130,14 @@ export default function ListDetailScreen({ route, navigation }: Props) {
               onChangeText={(text) => handleRename(item, text)}
               onEndEditing={(e) => handleRenameCommit(item, e.nativeEvent.text)}
             />
+            <TextInput
+              style={[styles.quantityInput, item.checked && styles.itemInputChecked]}
+              value={String(item.quantity)}
+              onChangeText={(text) => handleQuantityChange(item, text)}
+              onEndEditing={() => handleQuantityCommit(item)}
+              keyboardType="number-pad"
+              textAlign="center"
+            />
             <Pressable onPress={() => handleDelete(item)} style={styles.deleteButton}>
               <Text style={styles.deleteButtonText}>✕</Text>
             </Pressable>
@@ -100,12 +147,13 @@ export default function ListDetailScreen({ route, navigation }: Props) {
 
       <View style={styles.addRow}>
         <TextInput
+          ref={newItemInputRef}
           style={styles.addInput}
-          placeholder="Novo item"
+          placeholder="Novo item (cole uma lista para adicionar vários)"
           value={newItemName}
-          onChangeText={setNewItemName}
-          onSubmitEditing={handleAdd}
-          returnKeyType="done"
+          onChangeText={handleNewItemChangeText}
+          multiline
+          blurOnSubmit={false}
         />
         <Pressable style={styles.addButton} onPress={handleAdd}>
           <Text style={styles.addButtonText}>Adicionar</Text>
@@ -148,10 +196,21 @@ const styles = StyleSheet.create({
   checkboxMark: { color: '#fff', fontWeight: '700' },
   itemInput: { flex: 1, fontSize: 16, marginLeft: 10, color: '#111827' },
   itemInputChecked: { color: '#9ca3af', textDecorationLine: 'line-through' },
-  deleteButton: { padding: 8 },
+  quantityInput: {
+    width: 44,
+    marginLeft: 8,
+    fontSize: 16,
+    color: '#111827',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 6,
+    paddingVertical: 4,
+  },
+  deleteButton: { padding: 8, marginLeft: 4 },
   deleteButtonText: { color: '#ef4444', fontSize: 16 },
   addRow: {
     flexDirection: 'row',
+    alignItems: 'flex-end',
     padding: 12,
     borderTopWidth: 1,
     borderTopColor: '#e5e7eb',
@@ -164,12 +223,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     fontSize: 16,
+    maxHeight: 120,
   },
   addButton: {
     marginLeft: 8,
     backgroundColor: '#2563eb',
     borderRadius: 8,
     paddingHorizontal: 16,
+    paddingVertical: 10,
     justifyContent: 'center',
   },
   addButtonText: { color: '#fff', fontWeight: '700' },

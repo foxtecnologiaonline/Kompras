@@ -7,6 +7,7 @@ export interface ShoppingListItem {
   id: number;
   list_id: number;
   name: string;
+  quantity: number;
   checked: boolean;
 }
 
