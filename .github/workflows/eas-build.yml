@@ -25,10 +25,13 @@ jobs:
         run: npm ci
 
       - name: Check EXPO_TOKEN secret
-        if: ${{ secrets.EXPO_TOKEN == '' }}
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
-          echo "::error::Secret EXPO_TOKEN não configurado neste repositório. Veja o README (seção 'Build de teste automático') para criar o token em expo.dev e adicioná-lo em Settings → Secrets and variables → Actions."
-          exit 1
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::Secret EXPO_TOKEN não configurado neste repositório. Veja o README (seção 'Build de teste automático') para criar o token em expo.dev e adicioná-lo em Settings → Secrets and variables → Actions."
+            exit 1
+          fi
 
       - name: Setup Expo & EAS
         uses: expo/expo-github-action@v9
