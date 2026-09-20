@@ -9,11 +9,13 @@
     "expo-build-properties": "^57.0.21",
     "expo-camera": "^57.0.5",
     "expo-file-system": "^57.0.7",
+    "expo-haptics": "^57.0.3",
     "expo-image-picker": "^57.0.19",
     "expo-sqlite": "^57.0.3",
     "expo-status-bar": "~57.0.1",
     "react": "19.2.3",
     "react-native": "0.86.3",
+    "react-native-gesture-handler": "~2.32.0",
     "react-native-safe-area-context": "^5.10.0",
     "react-native-screens": "^4.28.0"
   },

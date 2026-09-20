@@ -1,5 +1,6 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   KeyboardAvoidingView,
@@ -14,6 +15,7 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSQLiteContext } from 'expo-sqlite';
+import * as Haptics from 'expo-haptics';
 import type { RootStackParamList, ShoppingList } from '../types';
 import {
   createShoppingList,
@@ -21,19 +23,34 @@ import {
   getShoppingLists,
   updateShoppingListName,
 } from '../db/repository';
+import SwipeableRow from '../components/SwipeableRow';
+import { animateNextLayout } from '../utils/animateNextLayout';
+import { ThemeColors, useThemeColors } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Lists'>;
 
 export default function ListsScreen({ navigation }: Props) {
   const db = useSQLiteContext();
+  const colors = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   const [lists, setLists] = useState<ShoppingList[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [nameModalVisible, setNameModalVisible] = useState(false);
   const [nameInput, setNameInput] = useState('');
   const [editingList, setEditingList] = useState<ShoppingList | null>(null);
 
   const load = useCallback(async () => {
-    const rows = await getShoppingLists(db);
-    setLists(rows);
+    try {
+      const rows = await getShoppingLists(db);
+      setLists(rows);
+      setError(false);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
   }, [db]);
 
   useFocusEffect(
@@ -67,6 +84,7 @@ export default function ListsScreen({ navigation }: Props) {
     } else {
       const id = await createShoppingList(db, trimmed || null);
       setNameModalVisible(false);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       await load();
       navigation.navigate('ListDetail', { listId: id });
     }
@@ -82,7 +100,9 @@ export default function ListsScreen({ navigation }: Props) {
           text: 'Excluir',
           style: 'destructive',
           onPress: async () => {
+            animateNextLayout();
             await deleteShoppingList(db, list.id);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             await load();
           },
         },
@@ -98,10 +118,39 @@ export default function ListsScreen({ navigation }: Props) {
     ]);
   };
 
+  if (loading) {
+    return (
+      <View style={styles.centerContainer}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={styles.centerContainer}>
+        <Text style={styles.emptyText}>Não foi possível carregar suas listas.</Text>
+        <Pressable
+          style={styles.primaryButton}
+          onPress={load}
+          accessibilityRole="button"
+          accessibilityLabel="Tentar carregar novamente"
+        >
+          <Text style={styles.primaryButtonText}>Tentar novamente</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <View style={styles.headerRow}>
-        <Pressable style={styles.historyButton} onPress={() => navigation.navigate('History')}>
+        <Pressable
+          style={styles.historyButton}
+          onPress={() => navigation.navigate('History')}
+          accessibilityRole="button"
+          accessibilityLabel="Ver histórico de compras"
+        >
           <Text style={styles.historyButtonText}>Histórico</Text>
         </Pressable>
       </View>
@@ -111,28 +160,58 @@ export default function ListsScreen({ navigation }: Props) {
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={lists.length === 0 ? styles.emptyContainer : undefined}
         ListEmptyComponent={
-          <Text style={styles.emptyText}>Nenhuma lista ainda. Crie a sua primeira!</Text>
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateIcon}>🛒</Text>
+            <Text style={styles.emptyText}>Nenhuma lista ainda.</Text>
+            <Pressable
+              style={styles.primaryButton}
+              onPress={openCreateModal}
+              accessibilityRole="button"
+              accessibilityLabel="Criar minha primeira lista"
+            >
+              <Text style={styles.primaryButtonText}>Criar minha primeira lista</Text>
+            </Pressable>
+          </View>
         }
         ListHeaderComponent={
           lists.length > 0 ? (
-            <Text style={styles.hint}>Toque e segure uma lista para renomear ou excluir</Text>
+            <Text style={styles.hint}>Toque e segure, ou deslize, para renomear ou excluir</Text>
           ) : null
         }
         renderItem={({ item }) => (
-          <Pressable
-            style={styles.listRow}
-            onPress={() => navigation.navigate('ListDetail', { listId: item.id })}
-            onLongPress={() => handleLongPress(item)}
+          <SwipeableRow
+            actions={[
+              {
+                label: 'Excluir',
+                color: colors.danger,
+                accessibilityLabel: `Excluir ${listDisplayName(item)}`,
+                onPress: () => handleDelete(item),
+              },
+            ]}
           >
-            <Text style={styles.listTitle}>{listDisplayName(item)}</Text>
-            {item.name && (
-              <Text style={styles.listSubtitle}>Criada em {formatDate(item.created_at)}</Text>
-            )}
-          </Pressable>
+            <Pressable
+              style={styles.listRow}
+              onPress={() => navigation.navigate('ListDetail', { listId: item.id })}
+              onLongPress={() => handleLongPress(item)}
+              accessibilityRole="button"
+              accessibilityLabel={listDisplayName(item)}
+              accessibilityHint="Toque para abrir. Toque e segure para renomear ou excluir."
+            >
+              <Text style={styles.listTitle}>{listDisplayName(item)}</Text>
+              {item.name && (
+                <Text style={styles.listSubtitle}>Criada em {formatDate(item.created_at)}</Text>
+              )}
+            </Pressable>
+          </SwipeableRow>
         )}
       />
 
-      <Pressable style={styles.createButton} onPress={openCreateModal}>
+      <Pressable
+        style={styles.createButton}
+        onPress={openCreateModal}
+        accessibilityRole="button"
+        accessibilityLabel="Nova lista"
+      >
         <Text style={styles.createButtonText}>+ Nova lista</Text>
       </Pressable>
 
@@ -148,6 +227,7 @@ export default function ListsScreen({ navigation }: Props) {
             <TextInput
               style={styles.modalInput}
               placeholder="Ex: Lista mensal"
+              placeholderTextColor={colors.textFaint}
               value={nameInput}
               onChangeText={setNameInput}
               autoFocus
@@ -155,10 +235,20 @@ export default function ListsScreen({ navigation }: Props) {
               returnKeyType="done"
             />
             <View style={styles.modalButtonRow}>
-              <Pressable style={styles.modalCancelButton} onPress={closeNameModal}>
+              <Pressable
+                style={styles.modalCancelButton}
+                onPress={closeNameModal}
+                accessibilityRole="button"
+                accessibilityLabel="Cancelar"
+              >
                 <Text style={styles.modalCancelButtonText}>Cancelar</Text>
               </Pressable>
-              <Pressable style={styles.modalSaveButton} onPress={handleSaveName}>
+              <Pressable
+                style={styles.modalSaveButton}
+                onPress={handleSaveName}
+                accessibilityRole="button"
+                accessibilityLabel="Salvar"
+              >
                 <Text style={styles.modalSaveButtonText}>Salvar</Text>
               </Pressable>
             </View>
@@ -178,70 +268,92 @@ function formatDate(iso: string): string {
   return date.toLocaleDateString('pt-BR');
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  headerRow: { flexDirection: 'row', justifyContent: 'flex-end', padding: 16 },
-  historyButton: { padding: 8 },
-  historyButtonText: { color: '#2563eb', fontSize: 16, fontWeight: '600' },
-  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  emptyText: { color: '#6b7280', fontSize: 16 },
-  hint: {
-    color: '#9ca3af',
-    fontSize: 12,
-    paddingHorizontal: 20,
-    paddingBottom: 8,
-  },
-  listRow: {
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-  },
-  listTitle: { fontSize: 17, color: '#111827' },
-  listSubtitle: { fontSize: 13, color: '#9ca3af', marginTop: 2 },
-  createButton: {
-    backgroundColor: '#2563eb',
-    margin: 16,
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  createButtonText: { color: '#fff', fontSize: 17, fontWeight: '700' },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  modalCard: {
-    width: '100%',
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 20,
-  },
-  modalTitle: { fontSize: 17, fontWeight: '700', color: '#111827', marginBottom: 12 },
-  modalInput: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 16,
-  },
-  modalButtonRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginTop: 16,
-    gap: 12,
-  },
-  modalCancelButton: { paddingVertical: 10, paddingHorizontal: 12 },
-  modalCancelButtonText: { color: '#6b7280', fontSize: 15, fontWeight: '600' },
-  modalSaveButton: {
-    backgroundColor: '#2563eb',
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-  },
-  modalSaveButtonText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-});
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.background },
+    centerContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: colors.background,
+      padding: 24,
+      gap: 16,
+    },
+    headerRow: { flexDirection: 'row', justifyContent: 'flex-end', padding: 16 },
+    historyButton: { padding: 8 },
+    historyButtonText: { color: colors.primary, fontSize: 16, fontWeight: '600' },
+    emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+    emptyState: { alignItems: 'center', gap: 12, paddingHorizontal: 32 },
+    emptyStateIcon: { fontSize: 48, marginBottom: 4 },
+    emptyText: { color: colors.textMuted, fontSize: 16, textAlign: 'center' },
+    hint: {
+      color: colors.textFaint,
+      fontSize: 12,
+      paddingHorizontal: 20,
+      paddingBottom: 8,
+    },
+    listRow: {
+      backgroundColor: colors.background,
+      paddingVertical: 16,
+      paddingHorizontal: 20,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    listTitle: { fontSize: 17, color: colors.text },
+    listSubtitle: { fontSize: 13, color: colors.textFaint, marginTop: 2 },
+    createButton: {
+      backgroundColor: colors.primary,
+      margin: 16,
+      paddingVertical: 14,
+      borderRadius: 10,
+      alignItems: 'center',
+    },
+    createButtonText: { color: colors.primaryText, fontSize: 17, fontWeight: '700' },
+    primaryButton: {
+      backgroundColor: colors.primary,
+      paddingVertical: 14,
+      paddingHorizontal: 24,
+      borderRadius: 10,
+      alignItems: 'center',
+    },
+    primaryButtonText: { color: colors.primaryText, fontSize: 16, fontWeight: '700' },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: colors.overlay,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 24,
+    },
+    modalCard: {
+      width: '100%',
+      backgroundColor: colors.surface,
+      borderRadius: 12,
+      padding: 20,
+    },
+    modalTitle: { fontSize: 17, fontWeight: '700', color: colors.text, marginBottom: 12 },
+    modalInput: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      fontSize: 16,
+      color: colors.text,
+    },
+    modalButtonRow: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      marginTop: 16,
+      gap: 12,
+    },
+    modalCancelButton: { paddingVertical: 10, paddingHorizontal: 12 },
+    modalCancelButtonText: { color: colors.textMuted, fontSize: 15, fontWeight: '600' },
+    modalSaveButton: {
+      backgroundColor: colors.primary,
+      borderRadius: 8,
+      paddingVertical: 10,
+      paddingHorizontal: 18,
+    },
+    modalSaveButtonText: { color: colors.primaryText, fontSize: 15, fontWeight: '700' },
+  });
+}

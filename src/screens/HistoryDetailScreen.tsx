@@ -1,26 +1,38 @@
-import { useCallback, useState } from 'react';
-import { FlatList, Image, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, FlatList, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSQLiteContext } from 'expo-sqlite';
 import type { Purchase, PurchaseItem, RootStackParamList } from '../types';
 import { getPurchase, getPurchaseItems } from '../db/repository';
+import { ThemeColors, useThemeColors } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'HistoryDetail'>;
 
 export default function HistoryDetailScreen({ route }: Props) {
   const { purchaseId } = route.params;
   const db = useSQLiteContext();
+  const colors = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [purchase, setPurchase] = useState<Purchase | null>(null);
   const [items, setItems] = useState<PurchaseItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   const load = useCallback(async () => {
-    const [p, i] = await Promise.all([
-      getPurchase(db, purchaseId),
-      getPurchaseItems(db, purchaseId),
-    ]);
-    setPurchase(p);
-    setItems(i);
+    try {
+      const [p, i] = await Promise.all([
+        getPurchase(db, purchaseId),
+        getPurchaseItems(db, purchaseId),
+      ]);
+      setPurchase(p);
+      setItems(i);
+      setError(false);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
   }, [db, purchaseId]);
 
   useFocusEffect(
@@ -29,8 +41,36 @@ export default function HistoryDetailScreen({ route }: Props) {
     }, [load])
   );
 
+  if (loading) {
+    return (
+      <View style={styles.centerContainer}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={styles.centerContainer}>
+        <Text style={styles.emptyText}>Não foi possível carregar esta compra.</Text>
+        <Pressable
+          style={styles.retryButton}
+          onPress={load}
+          accessibilityRole="button"
+          accessibilityLabel="Tentar carregar novamente"
+        >
+          <Text style={styles.retryButtonText}>Tentar novamente</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   if (!purchase) {
-    return <View style={styles.container} />;
+    return (
+      <View style={styles.centerContainer}>
+        <Text style={styles.emptyText}>Esta compra não foi encontrada.</Text>
+      </View>
+    );
   }
 
   return (
@@ -46,6 +86,7 @@ export default function HistoryDetailScreen({ route }: Props) {
             source={{ uri: purchase.receipt_photo_uri }}
             style={styles.receiptPhoto}
             resizeMode="contain"
+            accessibilityLabel="Foto do cupom fiscal"
           />
         )}
       </View>
@@ -81,32 +122,50 @@ function formatCurrency(value: number): string {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  header: {
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-  },
-  date: { fontSize: 16, color: '#6b7280' },
-  total: { fontSize: 28, fontWeight: '700', color: '#111827', marginTop: 4 },
-  note: { fontSize: 13, color: '#b45309', marginTop: 6 },
-  receiptPhoto: {
-    width: '100%',
-    height: 220,
-    borderRadius: 8,
-    marginTop: 12,
-    backgroundColor: '#f3f4f6',
-  },
-  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  emptyText: { color: '#6b7280', fontSize: 16, padding: 20, textAlign: 'center' },
-  itemRow: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  },
-  itemDescription: { fontSize: 16, color: '#111827' },
-  itemDetails: { fontSize: 13, color: '#6b7280', marginTop: 2 },
-  itemTotal: { fontSize: 14, fontWeight: '600', color: '#111827', marginTop: 2 },
-});
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.background },
+    centerContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: colors.background,
+      padding: 24,
+      gap: 16,
+    },
+    header: {
+      padding: 20,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    date: { fontSize: 16, color: colors.textMuted },
+    total: { fontSize: 28, fontWeight: '700', color: colors.text, marginTop: 4 },
+    note: { fontSize: 13, color: colors.warning, marginTop: 6 },
+    receiptPhoto: {
+      width: '100%',
+      height: 220,
+      borderRadius: 8,
+      marginTop: 12,
+      backgroundColor: colors.surfaceAlt,
+    },
+    emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+    emptyText: { color: colors.textMuted, fontSize: 16, padding: 20, textAlign: 'center' },
+    retryButton: {
+      backgroundColor: colors.primary,
+      paddingVertical: 14,
+      paddingHorizontal: 24,
+      borderRadius: 10,
+      alignItems: 'center',
+    },
+    retryButtonText: { color: colors.primaryText, fontSize: 16, fontWeight: '700' },
+    itemRow: {
+      paddingVertical: 12,
+      paddingHorizontal: 20,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    itemDescription: { fontSize: 16, color: colors.text },
+    itemDetails: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
+    itemTotal: { fontSize: 14, fontWeight: '600', color: colors.text, marginTop: 2 },
+  });
+}

@@ -18,12 +18,28 @@ export function extractUrlFromQrData(data: string): string {
   return match[0];
 }
 
-export async function fetchNfceHtml(url: string): Promise<string> {
+const FETCH_TIMEOUT_MS = 15000;
+
+export async function fetchNfceHtml(url: string, signal?: AbortSignal): Promise<string> {
+  const timeoutController = new AbortController();
+  const timeout = setTimeout(() => timeoutController.abort(), FETCH_TIMEOUT_MS);
+  const onExternalAbort = () => timeoutController.abort();
+  signal?.addEventListener('abort', onExternalAbort);
+
   let response: Response;
   try {
-    response = await fetch(url);
-  } catch {
+    response = await fetch(url, { signal: timeoutController.signal });
+  } catch (err) {
+    if (signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError');
+    }
+    if (timeoutController.signal.aborted) {
+      throw new Error('O cupom fiscal demorou demais para responder. Tente novamente.');
+    }
     throw new Error('Falha de conexão ao buscar o cupom fiscal.');
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener('abort', onExternalAbort);
   }
   if (!response.ok) {
     throw new Error(`Falha ao buscar cupom fiscal (HTTP ${response.status}).`);
