@@ -18,19 +18,6 @@ export function extractUrlFromQrData(data: string): string {
   return match[0];
 }
 
-export async function fetchNfceHtml(url: string): Promise<string> {
-  let response: Response;
-  try {
-    response = await fetch(url);
-  } catch {
-    throw new Error('Falha de conexão ao buscar o cupom fiscal.');
-  }
-  if (!response.ok) {
-    throw new Error(`Falha ao buscar cupom fiscal (HTTP ${response.status}).`);
-  }
-  return response.text();
-}
-
 /** Trims boilerplate (scripts/styles) so the raw HTML is small enough to share for debugging. */
 export function stripScriptsAndStyles(html: string): string {
   return html
@@ -60,10 +47,13 @@ function brDateToIso(br: string): string {
 }
 
 /**
- * Parses the public NFC-e consulta HTML page (Sefaz-MG). The layout follows
- * the common "Portal NFC-e" template shared across states: item name/code in
- * spans with class txtTit/RCod, quantity/unit value/line total in spans with
- * class Rqtd/RvlUnit/valor, inside a #tabResult table.
+ * Parses the NFC-e consulta result DOM (Sefaz-MG), captured from the WebView
+ * after the user gets past the Cloudflare challenge and taps "Visualizar" —
+ * a plain fetch() never sees this markup, since the portal only renders it
+ * after that challenge. Layout follows the common "Portal NFC-e" template
+ * shared across states: item name/code in spans with class txtTit/RCod,
+ * quantity/unit value/line total in spans with class Rqtd/RvlUnit/valor,
+ * inside a #tabResult table.
  */
 export function parseNfceHtml(html: string): ParsedNfce {
   const nameRegex = /class="[^"]*\btxtTit\b[^"]*"[^>]*>([\s\S]*?)<\/span>/g;

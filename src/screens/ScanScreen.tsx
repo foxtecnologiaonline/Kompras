@@ -1,10 +1,9 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -12,16 +11,12 @@ import {
 } from 'react-native';
 import { CameraView, scanFromURLAsync, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
+import { useIsFocused } from '@react-navigation/native';
 import { useSQLiteContext } from 'expo-sqlite';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types';
-import { addPurchaseItem, createPurchase } from '../db/repository';
-import {
-  extractUrlFromQrData,
-  fetchNfceHtml,
-  parseNfceHtml,
-  stripScriptsAndStyles,
-} from '../utils/nfce';
+import { createPurchase } from '../db/repository';
+import { extractUrlFromQrData } from '../utils/nfce';
 import { persistReceiptPhoto } from '../utils/receiptPhoto';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Scan'>;
@@ -31,64 +26,51 @@ type Stage = 'scanning' | 'processing' | 'error' | 'manual' | 'saving';
 export default function ScanScreen({ route, navigation }: Props) {
   const { listId } = route.params;
   const db = useSQLiteContext();
+  const isFocused = useIsFocused();
   const [permission, requestPermission] = useCameraPermissions();
   const [stage, setStage] = useState<Stage>('scanning');
   const [errorMessage, setErrorMessage] = useState('');
   const [manualTotal, setManualTotal] = useState('');
-  const [debugHtml, setDebugHtml] = useState<string | null>(null);
   const [receiptPhotoUri, setReceiptPhotoUri] = useState<string | null>(null);
   const scanLockRef = useRef(false); // guards continuous live barcode scanning only
   const actionLockRef = useRef(false); // guards the single-tap "tirar foto" / "galeria" actions
   const cameraRef = useRef<CameraView>(null);
 
-  /** Shared pipeline: a decoded QR string -> fetch the NFC-e page -> parse -> save. */
-  const processQrData = async (data: string) => {
-    let html: string | undefined;
+  // Coming back to this screen (e.g. "Voltar" from the NFC-e WebView after
+  // it couldn't read the page) should let a live scan try again right away,
+  // not stay silently stuck from the lock the previous attempt set.
+  useEffect(() => {
+    if (isFocused) {
+      scanLockRef.current = false;
+    }
+  }, [isFocused]);
+
+  /**
+   * A decoded QR string only ever contains the consulta URL — the Sefaz-MG
+   * portal gates the actual receipt data behind a Cloudflare challenge, so
+   * a plain fetch() can never see it. Hand the URL to a WebView screen
+   * where the challenge renders for real (and the user can solve it like
+   * in a normal browser) before we try to read the result.
+   */
+  const openNfceWebView = (data: string) => {
     try {
       const url = extractUrlFromQrData(data);
-      html = await fetchNfceHtml(url);
-      const parsed = parseNfceHtml(html);
-
-      const purchaseId = await createPurchase(
-        db,
-        listId,
-        parsed.purchaseDate,
-        parsed.totalValue,
-        'qr_parsed'
-      );
-      for (const item of parsed.items) {
-        await addPurchaseItem(db, purchaseId, item.description, item.unitValue, item.quantity);
-      }
-
-      navigation.replace('HistoryDetail', { purchaseId });
+      navigation.navigate('NfceWebView', { listId, url });
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : 'Erro ao processar o cupom.');
-      setDebugHtml(html ? stripScriptsAndStyles(html) : null);
+      setErrorMessage(err instanceof Error ? err.message : 'QR Code inválido.');
       setStage('error');
     }
   };
 
-  const handleShareDebugHtml = async () => {
-    if (!debugHtml) return;
-    try {
-      await Share.share({ message: debugHtml });
-    } catch {
-      // user dismissed the share sheet or it failed silently — nothing to recover here
-    }
-  };
-
-  const handleBarcodeScanned = async ({ data }: { data: string }) => {
+  const handleBarcodeScanned = ({ data }: { data: string }) => {
     if (scanLockRef.current) return;
     scanLockRef.current = true;
-    setDebugHtml(null);
-    setStage('processing');
-    await processQrData(data);
+    openNfceWebView(data);
   };
 
   const handleTakePhoto = async () => {
     if (actionLockRef.current) return;
     actionLockRef.current = true;
-    setDebugHtml(null);
     try {
       setStage('processing');
       const photo = await cameraRef.current?.takePictureAsync({ quality: 0.6 });
@@ -99,7 +81,7 @@ export default function ScanScreen({ route, navigation }: Props) {
         setStage('error');
         return;
       }
-      await processQrData(results[0].data);
+      openNfceWebView(results[0].data);
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Erro ao processar a foto.');
       setStage('error');
@@ -111,7 +93,6 @@ export default function ScanScreen({ route, navigation }: Props) {
   const handlePickImage = async () => {
     if (actionLockRef.current) return;
     actionLockRef.current = true;
-    setDebugHtml(null);
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
@@ -127,7 +108,7 @@ export default function ScanScreen({ route, navigation }: Props) {
         setStage('error');
         return;
       }
-      await processQrData(results[0].data);
+      openNfceWebView(results[0].data);
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Erro ao processar a imagem.');
       setStage('error');
@@ -189,7 +170,6 @@ export default function ScanScreen({ route, navigation }: Props) {
   const retryScan = () => {
     scanLockRef.current = false;
     setErrorMessage('');
-    setDebugHtml(null);
     setStage('scanning');
   };
 
@@ -276,11 +256,6 @@ export default function ScanScreen({ route, navigation }: Props) {
         <Pressable style={styles.secondaryButton} onPress={goToManual}>
           <Text style={styles.secondaryButtonText}>Informar valor manualmente</Text>
         </Pressable>
-        {debugHtml && (
-          <Pressable style={styles.secondaryButton} onPress={handleShareDebugHtml}>
-            <Text style={styles.debugButtonText}>Compartilhar dados técnicos (depuração)</Text>
-          </Pressable>
-        )}
       </View>
     );
   }
@@ -298,6 +273,7 @@ export default function ScanScreen({ route, navigation }: Props) {
       <CameraView
         ref={cameraRef}
         style={StyleSheet.absoluteFill}
+        active={isFocused}
         barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
         onBarcodeScanned={handleBarcodeScanned}
       />
@@ -375,7 +351,6 @@ const styles = StyleSheet.create({
   secondaryButton: { marginTop: 14, padding: 10 },
   secondaryButtonText: { color: '#2563eb', fontSize: 15, fontWeight: '600' },
   secondaryButtonTextLight: { color: '#93c5fd', fontSize: 15, fontWeight: '600' },
-  debugButtonText: { color: '#9ca3af', fontSize: 13, fontWeight: '500' },
   overlay: {
     position: 'absolute',
     bottom: 0,
