@@ -18,42 +18,28 @@ export function extractUrlFromQrData(data: string): string {
   return match[0];
 }
 
-const FETCH_TIMEOUT_MS = 15000;
+// Android's share intent has a binder transaction limit (roughly 1MB,
+// often less depending on the receiving app); a captured page can carry
+// megabytes of inline base64 assets or third-party script noise well past
+// that, which would make Share.share silently fail. Keep the shared text
+// small and comfortably under that ceiling.
+const MAX_DEBUG_HTML_LENGTH = 150_000;
 
-export async function fetchNfceHtml(url: string, signal?: AbortSignal): Promise<string> {
-  const timeoutController = new AbortController();
-  const timeout = setTimeout(() => timeoutController.abort(), FETCH_TIMEOUT_MS);
-  const onExternalAbort = () => timeoutController.abort();
-  signal?.addEventListener('abort', onExternalAbort);
-
-  let response: Response;
-  try {
-    response = await fetch(url, { signal: timeoutController.signal });
-  } catch (err) {
-    if (signal?.aborted) {
-      throw new DOMException('Aborted', 'AbortError');
-    }
-    if (timeoutController.signal.aborted) {
-      throw new Error('O cupom fiscal demorou demais para responder. Tente novamente.');
-    }
-    throw new Error('Falha de conexão ao buscar o cupom fiscal.');
-  } finally {
-    clearTimeout(timeout);
-    signal?.removeEventListener('abort', onExternalAbort);
-  }
-  if (!response.ok) {
-    throw new Error(`Falha ao buscar cupom fiscal (HTTP ${response.status}).`);
-  }
-  return response.text();
-}
-
-/** Trims boilerplate (scripts/styles) so the raw HTML is small enough to share for debugging. */
+/** Trims boilerplate (scripts/styles/comments/inline data URIs) and caps the
+ * length so the raw HTML is safe to hand to the native share sheet. */
 export function stripScriptsAndStyles(html: string): string {
-  return html
+  const cleaned = html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/data:[a-z0-9/+.;=-]+;base64,[a-z0-9+/=]+/gi, 'data:[omitido]')
     .replace(/\n\s*\n/g, '\n')
     .trim();
+
+  if (cleaned.length <= MAX_DEBUG_HTML_LENGTH) {
+    return cleaned;
+  }
+  return `${cleaned.slice(0, MAX_DEBUG_HTML_LENGTH)}\n\n[...truncado, ${cleaned.length - MAX_DEBUG_HTML_LENGTH} caracteres a mais...]`;
 }
 
 function stripTags(html: string): string {
@@ -76,10 +62,13 @@ function brDateToIso(br: string): string {
 }
 
 /**
- * Parses the public NFC-e consulta HTML page (Sefaz-MG). The layout follows
- * the common "Portal NFC-e" template shared across states: item name/code in
- * spans with class txtTit/RCod, quantity/unit value/line total in spans with
- * class Rqtd/RvlUnit/valor, inside a #tabResult table.
+ * Parses the NFC-e consulta result DOM (Sefaz-MG), captured from the WebView
+ * after the user gets past the Cloudflare challenge and taps "Visualizar" —
+ * a plain fetch() never sees this markup, since the portal only renders it
+ * after that challenge. Layout follows the common "Portal NFC-e" template
+ * shared across states: item name/code in spans with class txtTit/RCod,
+ * quantity/unit value/line total in spans with class Rqtd/RvlUnit/valor,
+ * inside a #tabResult table.
  */
 export function parseNfceHtml(html: string): ParsedNfce {
   const nameRegex = /class="[^"]*\btxtTit\b[^"]*"[^>]*>([\s\S]*?)<\/span>/g;

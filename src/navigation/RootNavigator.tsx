@@ -3,6 +3,7 @@ import type { RootStackParamList } from '../types';
 import ListsScreen from '../screens/ListsScreen';
 import ListDetailScreen from '../screens/ListDetailScreen';
 import ScanScreen from '../screens/ScanScreen';
+import NfceWebViewScreen from '../screens/NfceWebViewScreen';
 import HistoryScreen from '../screens/HistoryScreen';
 import HistoryDetailScreen from '../screens/HistoryDetailScreen';
 
@@ -21,6 +22,11 @@ export default function RootNavigator() {
         name="Scan"
         component={ScanScreen}
         options={{ title: 'Fechar Compra', presentation: 'modal' }}
+      />
+      <Stack.Screen
+        name="NfceWebView"
+        component={NfceWebViewScreen}
+        options={{ title: 'Consultar Cupom' }}
       />
       <Stack.Screen name="History" component={HistoryScreen} options={{ title: 'Histórico' }} />
       <Stack.Screen

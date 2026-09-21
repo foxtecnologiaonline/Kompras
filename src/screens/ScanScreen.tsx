@@ -6,7 +6,6 @@ import {
   Linking,
   Platform,
   Pressable,
-  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -15,16 +14,12 @@ import {
 import { CameraView, scanFromURLAsync, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
+import { useIsFocused } from '@react-navigation/native';
 import { useSQLiteContext } from 'expo-sqlite';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types';
-import { addPurchaseItem, createPurchase } from '../db/repository';
-import {
-  extractUrlFromQrData,
-  fetchNfceHtml,
-  parseNfceHtml,
-  stripScriptsAndStyles,
-} from '../utils/nfce';
+import { createPurchase } from '../db/repository';
+import { extractUrlFromQrData } from '../utils/nfce';
 import { persistReceiptPhoto } from '../utils/receiptPhoto';
 import { ThemeColors, useThemeColors } from '../theme';
 
@@ -37,22 +32,24 @@ export default function ScanScreen({ route, navigation }: Props) {
   const db = useSQLiteContext();
   const colors = useThemeColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const isFocused = useIsFocused();
   const [permission, requestPermission] = useCameraPermissions();
   const [stage, setStage] = useState<Stage>('scanning');
   const [errorMessage, setErrorMessage] = useState('');
   const [manualTotal, setManualTotal] = useState('');
-  const [debugHtml, setDebugHtml] = useState<string | null>(null);
   const [receiptPhotoUri, setReceiptPhotoUri] = useState<string | null>(null);
   const scanLockRef = useRef(false); // guards continuous live barcode scanning only
   const actionLockRef = useRef(false); // guards the single-tap "tirar foto" / "galeria" actions
   const cameraRef = useRef<CameraView>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
 
+  // Coming back to this screen (e.g. "Voltar" from the NFC-e WebView after
+  // it couldn't read the page) should let a live scan try again right away,
+  // not stay silently stuck from the lock the previous attempt set.
   useEffect(() => {
-    return () => {
-      abortControllerRef.current?.abort();
-    };
-  }, []);
+    if (isFocused) {
+      scanLockRef.current = false;
+    }
+  }, [isFocused]);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -70,67 +67,37 @@ export default function ScanScreen({ route, navigation }: Props) {
     });
   }, [navigation, styles]);
 
-  /** Shared pipeline: a decoded QR string -> fetch the NFC-e page -> parse -> save. */
-  const processQrData = async (data: string) => {
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-    let html: string | undefined;
+  /**
+   * A decoded QR string only ever contains the consulta URL — the Sefaz-MG
+   * portal gates the actual receipt data behind a Cloudflare challenge, so
+   * a plain fetch() can never see it. Hand the URL to a WebView screen
+   * where the challenge renders for real (and the user can solve it like
+   * in a normal browser) before we try to read the result.
+   */
+  const openNfceWebView = (data: string) => {
     try {
       const url = extractUrlFromQrData(data);
-      html = await fetchNfceHtml(url, controller.signal);
-      const parsed = parseNfceHtml(html);
-
-      const purchaseId = await createPurchase(
-        db,
-        listId,
-        parsed.purchaseDate,
-        parsed.totalValue,
-        'qr_parsed'
-      );
-      for (const item of parsed.items) {
-        await addPurchaseItem(db, purchaseId, item.description, item.unitValue, item.quantity);
-      }
-
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      navigation.replace('HistoryDetail', { purchaseId });
+      navigation.navigate('NfceWebView', { listId, url });
+      // This screen stays mounted (just not visible) under the pushed
+      // WebView screen — reset to the live camera now so that coming back
+      // (e.g. "Voltar" after a failed capture) never lands on a stuck
+      // "Processando..." view instead of the scanner.
+      setStage('scanning');
     } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return;
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      setErrorMessage(err instanceof Error ? err.message : 'Erro ao processar o cupom.');
-      setDebugHtml(html ? stripScriptsAndStyles(html) : null);
+      setErrorMessage(err instanceof Error ? err.message : 'QR Code inválido.');
       setStage('error');
     }
   };
 
-  const handleCancelProcessing = () => {
-    abortControllerRef.current?.abort();
-    scanLockRef.current = false;
-    setErrorMessage('');
-    setDebugHtml(null);
-    setStage('scanning');
-  };
-
-  const handleShareDebugHtml = async () => {
-    if (!debugHtml) return;
-    try {
-      await Share.share({ message: debugHtml });
-    } catch {
-      // user dismissed the share sheet or it failed silently — nothing to recover here
-    }
-  };
-
-  const handleBarcodeScanned = async ({ data }: { data: string }) => {
+  const handleBarcodeScanned = ({ data }: { data: string }) => {
     if (scanLockRef.current) return;
     scanLockRef.current = true;
-    setDebugHtml(null);
-    setStage('processing');
-    await processQrData(data);
+    openNfceWebView(data);
   };
 
   const handleTakePhoto = async () => {
     if (actionLockRef.current) return;
     actionLockRef.current = true;
-    setDebugHtml(null);
     try {
       setStage('processing');
       const photo = await cameraRef.current?.takePictureAsync({ quality: 0.6 });
@@ -141,7 +108,7 @@ export default function ScanScreen({ route, navigation }: Props) {
         setStage('error');
         return;
       }
-      await processQrData(results[0].data);
+      openNfceWebView(results[0].data);
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Erro ao processar a foto.');
       setStage('error');
@@ -153,7 +120,6 @@ export default function ScanScreen({ route, navigation }: Props) {
   const handlePickImage = async () => {
     if (actionLockRef.current) return;
     actionLockRef.current = true;
-    setDebugHtml(null);
     try {
       // Kept at full quality: this copy is only used transiently to decode a
       // QR code, never persisted, and a sharper image scans more reliably.
@@ -171,7 +137,7 @@ export default function ScanScreen({ route, navigation }: Props) {
         setStage('error');
         return;
       }
-      await processQrData(results[0].data);
+      openNfceWebView(results[0].data);
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Erro ao processar a imagem.');
       setStage('error');
@@ -242,7 +208,6 @@ export default function ScanScreen({ route, navigation }: Props) {
   const retryScan = () => {
     scanLockRef.current = false;
     setErrorMessage('');
-    setDebugHtml(null);
     setStage('scanning');
   };
 
@@ -386,16 +351,6 @@ export default function ScanScreen({ route, navigation }: Props) {
         >
           <Text style={styles.secondaryButtonText}>Informar valor manualmente</Text>
         </Pressable>
-        {debugHtml && (
-          <Pressable
-            style={styles.secondaryButton}
-            onPress={handleShareDebugHtml}
-            accessibilityRole="button"
-            accessibilityLabel="Compartilhar dados técnicos para depuração"
-          >
-            <Text style={styles.debugButtonText}>Compartilhar dados técnicos (depuração)</Text>
-          </Pressable>
-        )}
       </View>
     );
   }
@@ -405,30 +360,26 @@ export default function ScanScreen({ route, navigation }: Props) {
       <View style={styles.centerContainer}>
         <ActivityIndicator size="large" color={colors.primary} style={styles.spinner} />
         <Text style={styles.message}>
-          {stage === 'saving' ? 'Salvando compra...' : 'Processando cupom...'}
+          {stage === 'saving' ? 'Salvando compra...' : 'Processando...'}
         </Text>
-        {stage === 'processing' && (
-          <Pressable
-            style={styles.secondaryButton}
-            onPress={handleCancelProcessing}
-            accessibilityRole="button"
-            accessibilityLabel="Cancelar"
-          >
-            <Text style={styles.secondaryButtonText}>Cancelar</Text>
-          </Pressable>
-        )}
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <CameraView
-        ref={cameraRef}
-        style={StyleSheet.absoluteFill}
-        barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-        onBarcodeScanned={handleBarcodeScanned}
-      />
+      {/* `active` only pauses the session on iOS; unmounting on blur is what
+          actually stops the camera hardware/preview on Android too, instead
+          of it running invisibly under the pushed NfceWebView screen. */}
+      {isFocused && (
+        <CameraView
+          ref={cameraRef}
+          style={StyleSheet.absoluteFill}
+          active={isFocused}
+          barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+          onBarcodeScanned={handleBarcodeScanned}
+        />
+      )}
       <View style={styles.overlay}>
         <Text style={styles.overlayText}>Aponte a câmera para o QR Code do cupom fiscal</Text>
         <View style={styles.overlayButtonRow}>
@@ -523,7 +474,6 @@ function createStyles(colors: ThemeColors) {
     secondaryButton: { marginTop: 14, padding: 10 },
     secondaryButtonText: { color: colors.primary, fontSize: 15, fontWeight: '600' },
     secondaryButtonTextLight: { color: '#93c5fd', fontSize: 15, fontWeight: '600' },
-    debugButtonText: { color: colors.textFaint, fontSize: 13, fontWeight: '500' },
     overlay: {
       position: 'absolute',
       bottom: 0,

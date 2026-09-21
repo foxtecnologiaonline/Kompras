@@ -39,6 +39,7 @@ export type RootStackParamList = {
   Lists: undefined;
   ListDetail: { listId: number };
   Scan: { listId: number };
+  NfceWebView: { listId: number; url: string };
   History: undefined;
   HistoryDetail: { purchaseId: number };
 };
