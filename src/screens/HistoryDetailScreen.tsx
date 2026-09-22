@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { FlatList, Image, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -41,13 +41,17 @@ export default function HistoryDetailScreen({ route }: Props) {
         {purchase.raw_source === 'manual_fallback' && (
           <Text style={styles.note}>Valor informado manualmente (cupom não pôde ser lido)</Text>
         )}
-        {purchase.receipt_photo_uri && (
-          <Image
-            source={{ uri: purchase.receipt_photo_uri }}
-            style={styles.receiptPhoto}
-            resizeMode="contain"
-          />
-        )}
+        {purchase.receipt_photo_uri &&
+          (() => {
+            const attachmentUri = purchase.receipt_photo_uri;
+            return attachmentUri.toLowerCase().endsWith('.pdf') ? (
+              <Pressable style={styles.receiptPdf} onPress={() => Linking.openURL(attachmentUri)}>
+                <Text style={styles.receiptPdfText}>📄 Abrir PDF do cupom</Text>
+              </Pressable>
+            ) : (
+              <Image source={{ uri: attachmentUri }} style={styles.receiptPhoto} resizeMode="contain" />
+            );
+          })()}
       </View>
 
       <FlatList
@@ -98,6 +102,14 @@ const styles = StyleSheet.create({
     marginTop: 12,
     backgroundColor: '#f3f4f6',
   },
+  receiptPdf: {
+    marginTop: 12,
+    paddingVertical: 14,
+    borderRadius: 8,
+    backgroundColor: '#eff6ff',
+    alignItems: 'center',
+  },
+  receiptPdfText: { fontSize: 15, color: '#2563eb', fontWeight: '600' },
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { color: '#6b7280', fontSize: 16, padding: 20, textAlign: 'center' },
   itemRow: {

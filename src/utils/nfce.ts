@@ -56,21 +56,61 @@ function parseBrNumber(raw: string): number {
   return Number.isFinite(value) ? value : NaN;
 }
 
+// The portal isn't consistent about decimal separator: item line totals read
+// "R$ 5,99" (BR comma) while the page's own running totals and quantities
+// read "572.90" / "1.0000" (plain dot). Pick the right parse by what's
+// actually in the string instead of assuming one format.
+function parseMoney(raw: string): number {
+  const cleaned = raw.trim();
+  return cleaned.includes(',') ? parseBrNumber(cleaned) : parseFloat(cleaned);
+}
+
 function brDateToIso(br: string): string {
   const [d, m, y] = br.split('/');
   return new Date(`${y}-${m}-${d}T00:00:00`).toISOString();
 }
 
-/**
- * Parses the NFC-e consulta result DOM (Sefaz-MG), captured from the WebView
- * after the user gets past the Cloudflare challenge and taps "Visualizar" —
- * a plain fetch() never sees this markup, since the portal only renders it
- * after that challenge. Layout follows the common "Portal NFC-e" template
- * shared across states: item name/code in spans with class txtTit/RCod,
- * quantity/unit value/line total in spans with class Rqtd/RvlUnit/valor,
- * inside a #tabResult table.
- */
-export function parseNfceHtml(html: string): ParsedNfce {
+// Current Sefaz-MG "Portal NFC-e" template (as of 2026): items live in
+// <tbody id="myTable"> rows, name in a <h7> tag, quantity/value as plain
+// text ("Qtde total de ítens: 1.0000" / "Valor total R$: R$ 5,99").
+function parseCurrentLayoutItems(html: string): ParsedNfceItem[] {
+  const tbodyMatch = html.match(/<tbody[^>]*\bid="myTable"[^>]*>([\s\S]*?)<\/tbody>/i);
+  if (!tbodyMatch) return [];
+
+  const rows = tbodyMatch[1].match(/<tr>[\s\S]*?<\/tr>/gi) ?? [];
+  const items: ParsedNfceItem[] = [];
+  for (const row of rows) {
+    const nameMatch = row.match(/<h7>([\s\S]*?)<\/h7>/i);
+    const qtyMatch = row.match(/Qtde total de [ií]tens:\s*([\d.,]+)/i);
+    const valueMatch = row.match(/Valor total R\$:\s*R\$\s*([\d.,]+)/i);
+    if (!nameMatch || !qtyMatch || !valueMatch) continue;
+
+    const description = stripTags(nameMatch[1]);
+    const quantity = parseMoney(qtyMatch[1]);
+    const lineTotal = parseMoney(valueMatch[1]);
+    if (!description || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(lineTotal)) {
+      continue;
+    }
+    items.push({ description, quantity, unitValue: lineTotal / quantity });
+  }
+  return items;
+}
+
+function parseCurrentLayoutTotal(html: string): number {
+  const match = html.match(/Valor total R\$\s*<\/strong>[\s\S]{0,200}?<strong>\s*([\d.,]+)\s*<\/strong>/i);
+  return match ? parseMoney(match[1]) : NaN;
+}
+
+function parseCurrentLayoutDate(html: string): string | null {
+  const match = html.match(/(\d{2}\/\d{2}\/\d{4})\s+\d{2}:\d{2}:\d{2}/);
+  return match ? brDateToIso(match[1]) : null;
+}
+
+// Older Sefaz-MG template, kept as a fallback in case a cached/alternate
+// page still serves it: item name/code in spans with class txtTit/RCod,
+// quantity/unit value in spans with class Rqtd/RvlUnit, inside a
+// #tabResult table.
+function parseLegacyLayout(html: string): ParsedNfce {
   const nameRegex = /class="[^"]*\btxtTit\b[^"]*"[^>]*>([\s\S]*?)<\/span>/g;
   const qtyRegex = /class="[^"]*\bRqtd\b[^"]*"[^>]*>\s*Qtde\.?:?\s*([\d.,]+)/gi;
   const unitRegex = /class="[^"]*\bRvlUnit\b[^"]*"[^>]*>\s*Vl\.?\s*Unit\.?:?\s*([\d.,]+)/gi;
@@ -119,4 +159,25 @@ export function parseNfceHtml(html: string): ParsedNfce {
   const purchaseDate = dateMatch ? brDateToIso(dateMatch[1]) : new Date().toISOString();
 
   return { items, totalValue, purchaseDate };
+}
+
+/**
+ * Parses the NFC-e consulta result DOM (Sefaz-MG), captured from the WebView
+ * after the user gets past the Cloudflare challenge and taps "Visualizar" —
+ * a plain fetch() never sees this markup, since the portal only renders it
+ * after that challenge. Tries the current portal template first, falling
+ * back to an older one Sefaz-MG has used in the past.
+ */
+export function parseNfceHtml(html: string): ParsedNfce {
+  const items = parseCurrentLayoutItems(html);
+  if (items.length > 0) {
+    const totalValue = parseCurrentLayoutTotal(html);
+    if (Number.isNaN(totalValue)) {
+      throw new Error('Não foi possível interpretar o valor total do cupom fiscal.');
+    }
+    const purchaseDate = parseCurrentLayoutDate(html) ?? new Date().toISOString();
+    return { items, totalValue, purchaseDate };
+  }
+
+  return parseLegacyLayout(html);
 }

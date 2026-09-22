@@ -11,17 +11,22 @@ import {
 } from 'react-native';
 import { CameraView, scanFromURLAsync, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { useIsFocused } from '@react-navigation/native';
 import { useSQLiteContext } from 'expo-sqlite';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types';
 import { createPurchase } from '../db/repository';
 import { extractUrlFromQrData } from '../utils/nfce';
-import { persistReceiptPhoto } from '../utils/receiptPhoto';
+import { persistReceiptDocument, persistReceiptPhoto } from '../utils/receiptPhoto';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Scan'>;
 
 type Stage = 'scanning' | 'processing' | 'error' | 'manual' | 'saving';
+
+// Whatever the user attaches to back up the manually-typed total: a photo of
+// the whole paper coupon, or a PDF of the NFC-e/DANFE.
+type Attachment = { kind: 'photo'; uri: string } | { kind: 'pdf'; uri: string; name: string };
 
 export default function ScanScreen({ route, navigation }: Props) {
   const { listId } = route.params;
@@ -31,9 +36,9 @@ export default function ScanScreen({ route, navigation }: Props) {
   const [stage, setStage] = useState<Stage>('scanning');
   const [errorMessage, setErrorMessage] = useState('');
   const [manualTotal, setManualTotal] = useState('');
-  const [receiptPhotoUri, setReceiptPhotoUri] = useState<string | null>(null);
+  const [attachment, setAttachment] = useState<Attachment | null>(null);
   const scanLockRef = useRef(false); // guards continuous live barcode scanning only
-  const actionLockRef = useRef(false); // guards the single-tap "tirar foto" / "galeria" actions
+  const actionLockRef = useRef(false); // guards the single-tap "tirar foto" / "galeria" / "pdf" actions
   const cameraRef = useRef<CameraView>(null);
 
   // Coming back to this screen (e.g. "Voltar" from the NFC-e WebView after
@@ -121,7 +126,7 @@ export default function ScanScreen({ route, navigation }: Props) {
     try {
       const result = await ImagePicker.launchCameraAsync({ quality: 0.7 });
       if (result.canceled || result.assets.length === 0) return;
-      setReceiptPhotoUri(result.assets[0].uri);
+      setAttachment({ kind: 'photo', uri: result.assets[0].uri });
     } catch {
       // camera unavailable or permission denied — user just stays without a photo attached
     }
@@ -134,9 +139,45 @@ export default function ScanScreen({ route, navigation }: Props) {
         quality: 1,
       });
       if (result.canceled || result.assets.length === 0) return;
-      setReceiptPhotoUri(result.assets[0].uri);
+      setAttachment({ kind: 'photo', uri: result.assets[0].uri });
     } catch {
       // gallery unavailable or permission denied — user just stays without a photo attached
+    }
+  };
+
+  const handleAttachPdf = async () => {
+    if (actionLockRef.current) return;
+    actionLockRef.current = true;
+    try {
+      const result = await DocumentPicker.getDocumentAsync({ type: 'application/pdf' });
+      if (result.canceled || result.assets.length === 0) return;
+      const asset = result.assets[0];
+      setAttachment({ kind: 'pdf', uri: asset.uri, name: asset.name ?? 'cupom.pdf' });
+      setErrorMessage('');
+      setStage('manual');
+    } catch {
+      // picker unavailable or dismissed — user just stays without a document attached
+    } finally {
+      actionLockRef.current = false;
+    }
+  };
+
+  /** Takes a photo of the whole paper coupon (not the QR Code) and drops the
+   * user straight into manual entry with it attached — for when there's no
+   * QR Code to scan at all, not only as a fallback after a failed scan. */
+  const handleCaptureFullCoupon = async () => {
+    if (actionLockRef.current) return;
+    actionLockRef.current = true;
+    try {
+      const result = await ImagePicker.launchCameraAsync({ quality: 0.7 });
+      if (result.canceled || result.assets.length === 0) return;
+      setAttachment({ kind: 'photo', uri: result.assets[0].uri });
+      setErrorMessage('');
+      setStage('manual');
+    } catch {
+      // camera unavailable or permission denied — nothing to recover here
+    } finally {
+      actionLockRef.current = false;
     }
   };
 
@@ -148,12 +189,15 @@ export default function ScanScreen({ route, navigation }: Props) {
     }
     setErrorMessage('');
     setStage('saving');
-    let persistedPhotoUri: string | null = null;
-    if (receiptPhotoUri) {
+    let persistedUri: string | null = null;
+    if (attachment) {
       try {
-        persistedPhotoUri = await persistReceiptPhoto(receiptPhotoUri);
+        persistedUri =
+          attachment.kind === 'photo'
+            ? await persistReceiptPhoto(attachment.uri)
+            : await persistReceiptDocument(attachment.uri, attachment.name);
       } catch {
-        // couldn't persist the photo — still save the purchase with the total the user typed
+        // couldn't persist the attachment — still save the purchase with the total the user typed
       }
     }
     const purchaseId = await createPurchase(
@@ -162,7 +206,7 @@ export default function ScanScreen({ route, navigation }: Props) {
       new Date().toISOString(),
       total,
       'manual_fallback',
-      persistedPhotoUri
+      persistedUri
     );
     navigation.replace('HistoryDetail', { purchaseId });
   };
@@ -175,7 +219,7 @@ export default function ScanScreen({ route, navigation }: Props) {
 
   const goToManual = () => {
     setErrorMessage('');
-    setReceiptPhotoUri(null);
+    setAttachment(null);
     setStage('manual');
   };
 
@@ -213,15 +257,22 @@ export default function ScanScreen({ route, navigation }: Props) {
         />
         {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 
-        {receiptPhotoUri ? (
+        {attachment?.kind === 'photo' ? (
           <View style={styles.photoPreviewRow}>
-            <Image
-              source={{ uri: receiptPhotoUri }}
-              style={styles.photoPreview}
-              resizeMode="contain"
-            />
-            <Pressable onPress={() => setReceiptPhotoUri(null)}>
+            <Image source={{ uri: attachment.uri }} style={styles.photoPreview} resizeMode="contain" />
+            <Pressable onPress={() => setAttachment(null)}>
               <Text style={styles.secondaryButtonText}>Remover foto</Text>
+            </Pressable>
+          </View>
+        ) : attachment?.kind === 'pdf' ? (
+          <View style={styles.photoPreviewRow}>
+            <View style={styles.pdfPreview}>
+              <Text style={styles.pdfPreviewText} numberOfLines={1}>
+                📄 {attachment.name}
+              </Text>
+            </View>
+            <Pressable onPress={() => setAttachment(null)}>
+              <Text style={styles.secondaryButtonText}>Remover PDF</Text>
             </Pressable>
           </View>
         ) : (
@@ -231,6 +282,9 @@ export default function ScanScreen({ route, navigation }: Props) {
             </Pressable>
             <Pressable style={styles.attachPhotoButton} onPress={handleAttachPhotoFromGallery}>
               <Text style={styles.attachPhotoButtonText}>🖼️ Da galeria</Text>
+            </Pressable>
+            <Pressable style={styles.attachPhotoButton} onPress={handleAttachPdf}>
+              <Text style={styles.attachPhotoButtonText}>📄 PDF</Text>
             </Pressable>
           </View>
         )}
@@ -287,6 +341,14 @@ export default function ScanScreen({ route, navigation }: Props) {
             <Text style={styles.overlayButtonText}>Escolher da galeria</Text>
           </Pressable>
         </View>
+        <View style={styles.overlayButtonRow}>
+          <Pressable style={styles.overlayButton} onPress={handleCaptureFullCoupon}>
+            <Text style={styles.overlayButtonText}>📷 Fotografar cupom inteiro</Text>
+          </Pressable>
+          <Pressable style={styles.overlayButton} onPress={handleAttachPdf}>
+            <Text style={styles.overlayButtonText}>📄 Inserir PDF</Text>
+          </Pressable>
+        </View>
         <Pressable style={styles.secondaryButton} onPress={goToManual}>
           <Text style={styles.secondaryButtonTextLight}>Informar valor manualmente</Text>
         </Pressable>
@@ -328,6 +390,16 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     backgroundColor: '#f3f4f6',
   },
+  pdfPreview: {
+    width: 220,
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+    backgroundColor: '#f3f4f6',
+    alignItems: 'center',
+  },
+  pdfPreviewText: { fontSize: 14, color: '#374151', fontWeight: '600' },
   input: {
     borderWidth: 1,
     borderColor: '#d1d5db',
