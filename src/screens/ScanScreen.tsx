@@ -123,16 +123,22 @@ export default function ScanScreen({ route, navigation }: Props) {
   };
 
   const handleAttachPhotoFromCamera = async () => {
+    if (actionLockRef.current) return;
+    actionLockRef.current = true;
     try {
       const result = await ImagePicker.launchCameraAsync({ quality: 0.7 });
       if (result.canceled || result.assets.length === 0) return;
       setAttachment({ kind: 'photo', uri: result.assets[0].uri });
     } catch {
       // camera unavailable or permission denied — user just stays without a photo attached
+    } finally {
+      actionLockRef.current = false;
     }
   };
 
   const handleAttachPhotoFromGallery = async () => {
+    if (actionLockRef.current) return;
+    actionLockRef.current = true;
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
@@ -142,6 +148,8 @@ export default function ScanScreen({ route, navigation }: Props) {
       setAttachment({ kind: 'photo', uri: result.assets[0].uri });
     } catch {
       // gallery unavailable or permission denied — user just stays without a photo attached
+    } finally {
+      actionLockRef.current = false;
     }
   };
 
@@ -307,6 +315,12 @@ export default function ScanScreen({ route, navigation }: Props) {
         <Pressable style={styles.secondaryButton} onPress={handlePickImage}>
           <Text style={styles.secondaryButtonText}>Escolher imagem da galeria</Text>
         </Pressable>
+        <Pressable style={styles.secondaryButton} onPress={handleCaptureFullCoupon}>
+          <Text style={styles.secondaryButtonText}>📷 Fotografar cupom inteiro</Text>
+        </Pressable>
+        <Pressable style={styles.secondaryButton} onPress={handleAttachPdf}>
+          <Text style={styles.secondaryButtonText}>📄 Inserir PDF do cupom</Text>
+        </Pressable>
         <Pressable style={styles.secondaryButton} onPress={goToManual}>
           <Text style={styles.secondaryButtonText}>Informar valor manualmente</Text>
         </Pressable>
@@ -371,6 +385,8 @@ const styles = StyleSheet.create({
   errorText: { fontSize: 14, color: '#ef4444', textAlign: 'center', marginTop: -12, marginBottom: 16 },
   attachPhotoRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
     gap: 12,
     marginBottom: 20,
   },

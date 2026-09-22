@@ -1,8 +1,9 @@
 import { useCallback, useState } from 'react';
-import { FlatList, Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSQLiteContext } from 'expo-sqlite';
+import * as Sharing from 'expo-sharing';
 import type { Purchase, PurchaseItem, RootStackParamList } from '../types';
 import { getPurchase, getPurchaseItems } from '../db/repository';
 
@@ -33,6 +34,20 @@ export default function HistoryDetailScreen({ route }: Props) {
     return <View style={styles.container} />;
   }
 
+  const handleOpenPdf = async (uri: string) => {
+    try {
+      // Local file:// URIs can't be handed to Linking.openURL — Android
+      // throws FileUriExposedException and iOS won't resolve a viewer for
+      // it either. expo-sharing wraps the file in a proper content:// URI
+      // (via FileProvider) so the OS can route it to a PDF viewer / share sheet.
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf' });
+      }
+    } catch {
+      // sharing unavailable or dismissed — nothing to recover here
+    }
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -45,7 +60,7 @@ export default function HistoryDetailScreen({ route }: Props) {
           (() => {
             const attachmentUri = purchase.receipt_photo_uri;
             return attachmentUri.toLowerCase().endsWith('.pdf') ? (
-              <Pressable style={styles.receiptPdf} onPress={() => Linking.openURL(attachmentUri)}>
+              <Pressable style={styles.receiptPdf} onPress={() => handleOpenPdf(attachmentUri)}>
                 <Text style={styles.receiptPdfText}>📄 Abrir PDF do cupom</Text>
               </Pressable>
             ) : (
