@@ -1,15 +1,30 @@
-import { useCallback, useState } from 'react';
-import { FlatList, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useRef, useState } from 'react';
+import { Alert, FlatList, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSQLiteContext } from 'expo-sqlite';
 import * as Sharing from 'expo-sharing';
 import type { Purchase, PurchaseItem, RootStackParamList, ShoppingListItem } from '../types';
-import { getListItems, getPurchase, getPurchaseItems } from '../db/repository';
-import { summarizeChecked } from '../utils/comparison';
+import {
+  getListItems,
+  getPurchase,
+  getPurchaseItems,
+  linkPurchaseItem,
+  unlinkPurchaseItem,
+} from '../db/repository';
+import { buildComparison, type PlannedRow } from '../utils/comparison';
+import { formatCurrency, formatDate, formatQuantity } from '../utils/format';
 import PlanComparison from '../components/PlanComparison';
+import LinkPicker, { type LinkPickerOption } from '../components/LinkPicker';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'HistoryDetail'>;
+
+interface PickerState {
+  title: string;
+  options: LinkPickerOption[];
+  onPick: (key: string) => Promise<void>;
+  onUnlink?: () => Promise<void>;
+}
 
 export default function HistoryDetailScreen({ route }: Props) {
   const { purchaseId } = route.params;
@@ -17,6 +32,9 @@ export default function HistoryDetailScreen({ route }: Props) {
   const [purchase, setPurchase] = useState<Purchase | null>(null);
   const [items, setItems] = useState<PurchaseItem[]>([]);
   const [plannedItems, setPlannedItems] = useState<ShoppingListItem[]>([]);
+  const [picker, setPicker] = useState<PickerState | null>(null);
+  // Link changes are transactions on the shared connection: never overlap two.
+  const linkBusyRef = useRef(false);
 
   const load = useCallback(async () => {
     const [p, i] = await Promise.all([
@@ -54,6 +72,71 @@ export default function HistoryDetailScreen({ route }: Props) {
     }
   };
 
+  const comparison = plannedItems.length > 0 ? buildComparison(plannedItems, items) : null;
+  const plannedById = new Map(plannedItems.map((p) => [p.id, p]));
+
+  /** Runs a link change, then refreshes. A failure must not leave the picker hanging open. */
+  const applyLinkChange = async (change: () => Promise<void>) => {
+    if (linkBusyRef.current) return;
+    linkBusyRef.current = true;
+    try {
+      await change();
+    } catch {
+      Alert.alert('Não foi possível alterar o vínculo', 'Tente novamente.');
+    } finally {
+      linkBusyRef.current = false;
+    }
+    setPicker(null);
+    await load();
+  };
+
+  const openPicker = (state: PickerState) => {
+    if (state.options.length === 0 && !state.onUnlink) {
+      Alert.alert('Nada para vincular', 'Não há itens sem par do outro lado.');
+      return;
+    }
+    setPicker(state);
+  };
+
+  const couponOptions = (): LinkPickerOption[] =>
+    (comparison?.outside ?? []).map((pi) => ({
+      key: String(pi.id),
+      label: pi.description,
+      detail: `${formatQuantity(pi.quantity)} × ${formatCurrency(pi.unit_value)}`,
+    }));
+
+  // Planned item not bought -> pick which coupon item it was.
+  const handlePressMissing = (row: PlannedRow) =>
+    openPicker({
+      title: `Qual item do cupom é "${row.item.name}"?`,
+      options: couponOptions(),
+      onPick: (key) => applyLinkChange(() => linkPurchaseItem(db, Number(key), row.item.id)),
+    });
+
+  // Coupon item off the list -> pick which planned item it fulfils.
+  const handlePressOutside = (item: PurchaseItem) =>
+    openPicker({
+      title: `"${item.description}" é qual item da lista?`,
+      options: (comparison?.missing ?? []).map((row) => ({
+        key: String(row.item.id),
+        label: row.item.name,
+        detail: row.item.checked ? 'marcado como pego' : undefined,
+      })),
+      onPick: (key) => applyLinkChange(() => linkPurchaseItem(db, item.id, Number(key))),
+    });
+
+  // Already linked -> move it to another coupon item, or remove the link.
+  const handlePressMatched = (row: PlannedRow) => {
+    const bought = row.bought;
+    if (!bought) return;
+    openPicker({
+      title: `"${row.item.name}" ↔ ${bought.description}`,
+      options: couponOptions(),
+      onPick: (key) => applyLinkChange(() => linkPurchaseItem(db, Number(key), row.item.id)),
+      onUnlink: () => applyLinkChange(() => unlinkPurchaseItem(db, bought.id)),
+    });
+  };
+
   const header = (
     <View>
       <View style={styles.header}>
@@ -75,40 +158,54 @@ export default function HistoryDetailScreen({ route }: Props) {
           })()}
       </View>
 
-      {plannedItems.length > 0 && <PlanComparison summary={summarizeChecked(plannedItems)} />}
+      {comparison && (
+        <PlanComparison
+          comparison={comparison}
+          onPressMatched={handlePressMatched}
+          onPressMissing={handlePressMissing}
+          onPressOutside={handlePressOutside}
+        />
+      )}
     </View>
   );
 
   // The whole screen scrolls as one list: the header (photo + comparison) can be
   // tall, and a fixed header would squeeze the coupon items on small phones.
   return (
-    <FlatList
-      style={styles.container}
-      data={items}
-      keyExtractor={(item) => String(item.id)}
-      ListHeaderComponent={header}
-      ListEmptyComponent={
-        <Text style={styles.emptyText}>Nenhum item detalhado para esta compra.</Text>
-      }
-      renderItem={({ item }) => (
-        <View style={styles.itemRow}>
-          <Text style={styles.itemDescription}>{item.description}</Text>
-          <Text style={styles.itemDetails}>
-            {item.quantity} × {formatCurrency(item.unit_value)}
-          </Text>
-          <Text style={styles.itemTotal}>{formatCurrency(item.quantity * item.unit_value)}</Text>
-        </View>
-      )}
-    />
+    <>
+      <FlatList
+        style={styles.container}
+        data={items}
+        keyExtractor={(item) => String(item.id)}
+        ListHeaderComponent={header}
+        ListEmptyComponent={
+          <Text style={styles.emptyText}>Nenhum item detalhado para esta compra.</Text>
+        }
+        renderItem={({ item }) => {
+          const linkedTo = item.list_item_id !== null ? plannedById.get(item.list_item_id) : undefined;
+          return (
+            <View style={styles.itemRow}>
+              <Text style={styles.itemDescription}>{item.description}</Text>
+              {linkedTo && <Text style={styles.itemLink}>↔ {linkedTo.name}</Text>}
+              <Text style={styles.itemDetails}>
+                {formatQuantity(item.quantity)} × {formatCurrency(item.unit_value)}
+              </Text>
+              <Text style={styles.itemTotal}>{formatCurrency(item.quantity * item.unit_value)}</Text>
+            </View>
+          );
+        }}
+      />
+
+      <LinkPicker
+        visible={picker !== null}
+        title={picker?.title ?? ''}
+        options={picker?.options ?? []}
+        onPick={(key) => picker?.onPick(key)}
+        onUnlink={picker?.onUnlink}
+        onClose={() => setPicker(null)}
+      />
+    </>
   );
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('pt-BR');
-}
-
-function formatCurrency(value: number): string {
-  return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
 const styles = StyleSheet.create({
@@ -144,6 +241,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#f3f4f6',
   },
   itemDescription: { fontSize: 16, color: '#111827' },
+  itemLink: { fontSize: 13, color: '#2563eb', marginTop: 2 },
   itemDetails: { fontSize: 13, color: '#6b7280', marginTop: 2 },
   itemTotal: { fontSize: 14, fontWeight: '600', color: '#111827', marginTop: 2 },
 });

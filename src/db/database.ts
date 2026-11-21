@@ -74,5 +74,17 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase): Promise<void> {
     version = 5;
   }
 
+  if (version < 6) {
+    // Ties a coupon item to the planned list item it fulfils (planned x bought).
+    // The source ('auto' | 'manual') lets us measure how good the matcher is.
+    // Both are NULL for items with no match. The FK means a linked list item can
+    // only be deleted after its links are cleared (see repository.ts).
+    await db.execAsync(`
+      ALTER TABLE purchase_item ADD COLUMN list_item_id INTEGER REFERENCES shopping_list_item(id);
+      ALTER TABLE purchase_item ADD COLUMN list_item_link_source TEXT;
+    `);
+    version = 6;
+  }
+
   await db.execAsync(`PRAGMA user_version = ${version};`);
 }

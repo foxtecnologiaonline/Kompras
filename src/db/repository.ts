@@ -7,6 +7,7 @@ import type {
   ShoppingList,
   ShoppingListItem,
 } from '../types';
+import { matchItems, type BoughtItem } from '../utils/matching';
 
 // ---- shopping_list ----
 
@@ -45,8 +46,15 @@ export async function updateShoppingListName(
 
 export async function deleteShoppingList(db: SQLiteDatabase, listId: number): Promise<void> {
   // Order matters now that foreign keys are enforced: children first, and the
-  // purchases (history) are detached rather than deleted.
+  // purchases (history) are detached rather than deleted. Coupon items that
+  // were linked to this list's items keep existing but lose the link (the
+  // planned side of the comparison goes away with the list).
   await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `UPDATE purchase_item SET list_item_id = NULL, list_item_link_source = NULL
+       WHERE list_item_id IN (SELECT id FROM shopping_list_item WHERE list_id = ?)`,
+      listId
+    );
     await db.runAsync('DELETE FROM shopping_list_item WHERE list_id = ?', listId);
     await db.runAsync('UPDATE purchase SET list_id = NULL WHERE list_id = ?', listId);
     await db.runAsync('DELETE FROM shopping_list WHERE id = ?', listId);
@@ -140,7 +148,14 @@ export async function setListItemChecked(
 }
 
 export async function deleteListItem(db: SQLiteDatabase, itemId: number): Promise<void> {
-  await db.runAsync('DELETE FROM shopping_list_item WHERE id = ?', itemId);
+  // A coupon item may be linked to this list item (FK): clear the link first.
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      'UPDATE purchase_item SET list_item_id = NULL, list_item_link_source = NULL WHERE list_item_id = ?',
+      itemId
+    );
+    await db.runAsync('DELETE FROM shopping_list_item WHERE id = ?', itemId);
+  });
 }
 
 // ---- purchase ----
@@ -182,14 +197,32 @@ export async function createPurchase(db: SQLiteDatabase, purchase: NewPurchase):
     );
     purchaseId = result.lastInsertRowId;
 
+    const inserted: BoughtItem[] = [];
     for (const item of purchase.items ?? []) {
-      await db.runAsync(
+      const itemResult = await db.runAsync(
         'INSERT INTO purchase_item (purchase_id, description, unit_value, quantity) VALUES (?, ?, ?, ?)',
         purchaseId,
         item.description,
         item.unitValue,
         item.quantity
       );
+      inserted.push({ id: itemResult.lastInsertRowId, description: item.description });
+    }
+
+    // Suggest which coupon item fulfils which planned item. A guess, not a fact:
+    // the user can fix or remove any link afterwards (linkPurchaseItem).
+    if (purchase.listId !== null && inserted.length > 0) {
+      const planned = await db.getAllAsync<{ id: number; name: string }>(
+        'SELECT id, name FROM shopping_list_item WHERE list_id = ? ORDER BY id ASC',
+        purchase.listId
+      );
+      for (const match of matchItems(planned, inserted)) {
+        await db.runAsync(
+          "UPDATE purchase_item SET list_item_id = ?, list_item_link_source = 'auto' WHERE id = ?",
+          match.plannedId,
+          match.boughtId
+        );
+      }
     }
 
     if (purchase.listId !== null) {
@@ -201,6 +234,50 @@ export async function createPurchase(db: SQLiteDatabase, purchase: NewPurchase):
     }
   });
   return purchaseId;
+}
+
+/**
+ * Manually ties a coupon item to a planned list item. A list item fulfils at
+ * most one coupon item per purchase, so any other link to it is cleared, and
+ * the list item must belong to the list the purchase was made from.
+ */
+export async function linkPurchaseItem(
+  db: SQLiteDatabase,
+  purchaseItemId: number,
+  listItemId: number
+): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    const row = await db.getFirstAsync<{ purchase_id: number }>(
+      `SELECT pi.purchase_id
+       FROM purchase_item pi
+       JOIN purchase p ON p.id = pi.purchase_id
+       JOIN shopping_list_item li ON li.id = ? AND li.list_id = p.list_id
+       WHERE pi.id = ?`,
+      listItemId,
+      purchaseItemId
+    );
+    if (!row) {
+      throw new Error('Esse item não pertence à lista desta compra.');
+    }
+    await db.runAsync(
+      `UPDATE purchase_item SET list_item_id = NULL, list_item_link_source = NULL
+       WHERE purchase_id = ? AND list_item_id = ?`,
+      row.purchase_id,
+      listItemId
+    );
+    await db.runAsync(
+      "UPDATE purchase_item SET list_item_id = ?, list_item_link_source = 'manual' WHERE id = ?",
+      listItemId,
+      purchaseItemId
+    );
+  });
+}
+
+export async function unlinkPurchaseItem(db: SQLiteDatabase, purchaseItemId: number): Promise<void> {
+  await db.runAsync(
+    'UPDATE purchase_item SET list_item_id = NULL, list_item_link_source = NULL WHERE id = ?',
+    purchaseItemId
+  );
 }
 
 /** Most recent purchase recorded for a list, used to jump from a closed list to its receipt. */

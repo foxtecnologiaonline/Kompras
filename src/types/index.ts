@@ -28,12 +28,18 @@ export interface PurchaseWithCount extends Purchase {
   item_count: number;
 }
 
+/** How a coupon item got tied to a list item: guessed by the matcher, or picked by the user. */
+export type LinkSource = 'auto' | 'manual';
+
 export interface PurchaseItem {
   id: number;
   purchase_id: number;
   description: string;
   unit_value: number;
   quantity: number;
+  /** The planned list item this coupon item fulfils, if any. */
+  list_item_id: number | null;
+  list_item_link_source: LinkSource | null;
 }
 
 export type RootStackParamList = {

@@ -62,6 +62,7 @@ Uma parte do tamanho é inerente à funcionalidade de escanear o QR do cupom: o 
 2. **Modo compra** — marcar itens como "pego" na tela da lista.
 3. **Fechamento de compra** — escanear o QR Code do cupom fiscal (NFC-e), extrair itens e valor total automaticamente via parse do HTML do portal Sefaz-MG; se o parse falhar, permite informar o valor total manualmente.
 4. **Histórico** — lista de compras fechadas, com detalhe de itens e valores.
+5. **Planejado × comprado** — no detalhe de uma compra, compara a lista com o cupom: o que foi comprado, o que ficou de fora e o que entrou **fora da lista** (valor e % dos itens). O app sugere o vínculo item da lista ↔ item do cupom por palavras em comum (`src/utils/matching.ts`); toque num item para corrigir ou desvincular. Sem itens de cupom (valor manual), usa só o "pego" da lista. Uma lista fechada fica somente leitura até ser reaberta; excluir a lista apaga o lado "planejado" (a compra e o cupom permanecem).
 
 ## Estrutura
 
