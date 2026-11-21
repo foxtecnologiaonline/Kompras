@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, Share, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, Share, StyleSheet, Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { useSQLiteContext } from 'expo-sqlite';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types';
 import { createPurchase } from '../db/repository';
-import { parseNfceHtml, type ParsedNfce, stripScriptsAndStyles } from '../utils/nfce';
+import { findTotalMismatch, parseNfceHtml, type ParsedNfce, stripScriptsAndStyles } from '../utils/nfce';
+import { formatCurrency } from '../utils/format';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'NfceWebView'>;
 
@@ -27,6 +28,20 @@ const MOBILE_CHROME_USER_AGENT =
   'Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
 
 const CAPTURE_TIMEOUT_MS = 8000;
+
+function confirmTotalMismatch(itemsSum: string, total: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    Alert.alert(
+      'Os itens não batem com o total',
+      `Os itens lidos somam ${itemsSum}, mas o total do cupom é ${total}. Pode haver desconto, ou algum item não foi lido.\n\nSalvar mesmo assim?`,
+      [
+        { text: 'Capturar de novo', style: 'cancel', onPress: () => resolve(false) },
+        { text: 'Salvar', onPress: () => resolve(true) },
+      ],
+      { cancelable: false }
+    );
+  });
+}
 
 export default function NfceWebViewScreen({ route, navigation }: Props) {
   const { listId, url } = route.params;
@@ -87,6 +102,22 @@ export default function NfceWebViewScreen({ route, navigation }: Props) {
       );
       setCapturing(false);
       return;
+    }
+
+    // The coupon's own total is the cross-check for what we parsed: if the
+    // items don't add up, a row may have been skipped. Discounts also cause
+    // this, so ask instead of rejecting.
+    const mismatch = findTotalMismatch(parsed);
+    if (mismatch) {
+      const confirmed = await confirmTotalMismatch(
+        formatCurrency(mismatch.itemsSum),
+        formatCurrency(mismatch.totalValue)
+      );
+      if (!confirmed) {
+        setErrorMessage('Compra não salva. Confira se todos os itens apareceram na tela e capture de novo.');
+        setCapturing(false);
+        return;
+      }
     }
 
     try {

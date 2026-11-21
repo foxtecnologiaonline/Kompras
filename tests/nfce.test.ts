@@ -2,7 +2,12 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { extractUrlFromQrData, parseNfceHtml, stripScriptsAndStyles } from '../src/utils/nfce';
+import {
+  extractUrlFromQrData,
+  findTotalMismatch,
+  parseNfceHtml,
+  stripScriptsAndStyles,
+} from '../src/utils/nfce';
 
 // Fixtures are synthetic (see fixtures/README.md), not real captures.
 const fixture = (name: string) => readFileSync(join(__dirname, 'fixtures', name), 'utf8');
@@ -133,9 +138,31 @@ describe('parseNfceHtml — current layout edge cases', () => {
     );
   });
 
-  // Known gap (roadmap item 8): a row the parser can't read is dropped silently,
-  // so a coupon can be saved with items that don't add up to its total.
-  test.todo('flags a coupon whose items do not add up to the total');
+});
+
+describe('findTotalMismatch', () => {
+  test('a consistent coupon has no mismatch', () => {
+    assert.equal(findTotalMismatch(parseNfceHtml(fixture('current-layout.html'))), null);
+    assert.equal(findTotalMismatch(parseNfceHtml(fixture('legacy-layout.html'))), null);
+  });
+
+  test('tolerates a few cents of rounding drift', () => {
+    const p = parseNfceHtml(currentLayout([row('ITEM', '1.0000', '10,00')], '10.03'));
+    assert.equal(findTotalMismatch(p), null);
+  });
+
+  test('catches a row the parser silently skipped (items add up to less than the total)', () => {
+    // 2nd row has no readable value, so the parser drops it but the coupon total still counts it
+    const broken = '<tr><td><h7>ILEGIVEL</h7>Qtde total de ítens: 1.0000</td></tr>';
+    const p = parseNfceHtml(currentLayout([row('LEITE', '1.0000', '6,00'), broken], '14.00'));
+    assert.equal(p.items.length, 1);
+    assert.deepEqual(findTotalMismatch(p), { itemsSum: 6, totalValue: 14 });
+  });
+
+  test('reports a discount as a mismatch too — the caller decides what to do', () => {
+    const p = parseNfceHtml(currentLayout([row('LEITE', '1.0000', '20,00')], '15.00'));
+    assert.deepEqual(findTotalMismatch(p), { itemsSum: 20, totalValue: 15 });
+  });
 });
 
 describe('parseNfceHtml — legacy layout fallback', () => {

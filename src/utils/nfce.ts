@@ -10,6 +10,30 @@ export interface ParsedNfce {
   purchaseDate: string; // ISO string
 }
 
+// Item totals are rounded to the cent by the portal, so a few cents of drift
+// is normal; anything beyond this is a discount, a surcharge or an item the
+// parser could not read.
+const TOTAL_TOLERANCE = 0.05;
+
+export interface TotalMismatch {
+  /** Sum of quantity x unit value over the items that were parsed. */
+  itemsSum: number;
+  /** The total printed on the coupon. */
+  totalValue: number;
+}
+
+/**
+ * Compares the parsed items with the coupon's own total. Returns null when
+ * they agree. A mismatch is not necessarily an error (coupons can carry
+ * discounts), so the caller decides what to do — but it is the only signal that
+ * a row was silently skipped by the parser.
+ */
+export function findTotalMismatch(parsed: ParsedNfce): TotalMismatch | null {
+  const itemsSum = parsed.items.reduce((sum, i) => sum + i.quantity * i.unitValue, 0);
+  if (Math.abs(itemsSum - parsed.totalValue) <= TOTAL_TOLERANCE) return null;
+  return { itemsSum, totalValue: parsed.totalValue };
+}
+
 export function extractUrlFromQrData(data: string): string {
   const match = data.match(/https?:\/\/\S+/i);
   if (!match) {
