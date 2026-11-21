@@ -14,6 +14,8 @@ import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSQLiteContext } from 'expo-sqlite';
 import type { RootStackParamList, ShoppingList, ShoppingListItem } from '../types';
+import { formatQuantity } from '../utils/format';
+import { parseQuantityInput, sanitizeQuantityInput } from '../utils/quantity';
 import {
   addListItem,
   addListItems,
@@ -34,6 +36,9 @@ export default function ListDetailScreen({ route, navigation }: Props) {
   const db = useSQLiteContext();
   const [items, setItems] = useState<ShoppingListItem[]>([]);
   const [list, setList] = useState<ShoppingList | null>(null);
+  // What the user is typing in each quantity field. Kept as text while editing
+  // because "1," is not a number yet; committed (parsed) when editing ends.
+  const [quantityDrafts, setQuantityDrafts] = useState<Record<number, string>>({});
   const [newItemName, setNewItemName] = useState('');
   // A closed list is a record of what was planned for a purchase; editing it
   // afterwards would silently rewrite that plan. Reopening unlocks it.
@@ -109,14 +114,19 @@ export default function ListDetailScreen({ route, navigation }: Props) {
   };
 
   const handleQuantityChange = (item: ShoppingListItem, text: string) => {
-    const sanitized = text.replace(/[^0-9]/g, '');
-    setItems((prev) =>
-      prev.map((i) => (i.id === item.id ? { ...i, quantity: sanitized === '' ? 0 : Number(sanitized) } : i))
-    );
+    setQuantityDrafts((prev) => ({ ...prev, [item.id]: sanitizeQuantityInput(text) }));
   };
 
   const handleQuantityCommit = async (item: ShoppingListItem) => {
-    const quantity = item.quantity > 0 ? item.quantity : 1;
+    const draft = quantityDrafts[item.id];
+    if (draft === undefined) return;
+    setQuantityDrafts((prev) => {
+      const { [item.id]: _discarded, ...rest } = prev;
+      return rest;
+    });
+    // An empty or zero entry restores the previous quantity instead of saving nonsense.
+    const quantity = parseQuantityInput(draft) ?? item.quantity;
+    if (quantity === item.quantity) return;
     setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, quantity } : i)));
     await updateListItemQuantity(db, item.id, quantity);
   };
@@ -185,10 +195,10 @@ export default function ListDetailScreen({ route, navigation }: Props) {
             />
             <TextInput
               style={[styles.quantityInput, item.checked && styles.itemInputChecked]}
-              value={String(item.quantity)}
+              value={quantityDrafts[item.id] ?? formatQuantity(item.quantity)}
               onChangeText={(text) => handleQuantityChange(item, text)}
               onEndEditing={() => handleQuantityCommit(item)}
-              keyboardType="number-pad"
+              keyboardType="decimal-pad"
               textAlign="center"
               editable={!isClosed}
             />
@@ -273,7 +283,7 @@ const styles = StyleSheet.create({
   itemInput: { flex: 1, fontSize: 16, marginLeft: 10, color: '#111827' },
   itemInputChecked: { color: '#9ca3af', textDecorationLine: 'line-through' },
   quantityInput: {
-    width: 44,
+    width: 64,
     marginLeft: 8,
     fontSize: 16,
     color: '#111827',
