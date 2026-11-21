@@ -19,6 +19,18 @@ npm start
 
 Abra no dispositivo com o app Expo Go (Android/iOS) ou em um emulador.
 
+## Testes
+
+```bash
+npm run typecheck   # tsc no app e nos testes
+npm test            # parser da NFC-e + camada SQLite (runner nativo do Node, sem Jest)
+```
+
+- Exige **Node >= 22.13** (os testes de banco usam o `node:sqlite` embutido).
+- `tests/nfce.test.ts` cobre `src/utils/nfce.ts`; os HTMLs em `tests/fixtures/` são **sintéticos** — veja `tests/fixtures/README.md` para trocá-los por capturas reais.
+- `tests/db.test.ts` roda as migrações e o repositório reais contra um SQLite em memória (shim em `tests/helpers/sqliteShim.ts`). Ele não reproduz a semântica de conexões do `expo-sqlite`, só o SQL.
+- No GitHub Actions, `.github/workflows/ci.yml` roda isso nos PRs, e o build EAS só começa depois que passa.
+
 ## Build de teste automático (APK via EAS Build)
 
 Todo push nas branches `main` ou `claude/**` dispara um build automático de um APK Android instalável, via GitHub Actions + EAS Build. Não precisa de máquina local nem de Expo Go — é um instalador de verdade.

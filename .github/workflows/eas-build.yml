@@ -8,8 +8,13 @@ on:
   workflow_dispatch: {}
 
 jobs:
+  verify:
+    name: Typecheck and tests
+    uses: ./.github/workflows/ci.yml
+
   build:
     name: Build Android preview APK
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
