@@ -14,6 +14,7 @@ import {
 } from '../db/repository';
 import { buildComparison, type PlannedRow } from '../utils/comparison';
 import { formatCurrency, formatDate, formatQuantity } from '../utils/format';
+import { confirmAndDeletePurchase } from '../utils/purchaseActions';
 import PlanComparison from '../components/PlanComparison';
 import LinkPicker, { type LinkPickerOption } from '../components/LinkPicker';
 
@@ -26,7 +27,7 @@ interface PickerState {
   onUnlink?: () => Promise<void>;
 }
 
-export default function HistoryDetailScreen({ route }: Props) {
+export default function HistoryDetailScreen({ route, navigation }: Props) {
   const { purchaseId } = route.params;
   const db = useSQLiteContext();
   const [purchase, setPurchase] = useState<Purchase | null>(null);
@@ -169,6 +170,15 @@ export default function HistoryDetailScreen({ route }: Props) {
     </View>
   );
 
+  const footer = (
+    <Pressable
+      style={styles.deleteButton}
+      onPress={() => confirmAndDeletePurchase(db, purchase, () => navigation.goBack())}
+    >
+      <Text style={styles.deleteButtonText}>Excluir compra</Text>
+    </Pressable>
+  );
+
   // The whole screen scrolls as one list: the header (photo + comparison) can be
   // tall, and a fixed header would squeeze the coupon items on small phones.
   return (
@@ -178,6 +188,7 @@ export default function HistoryDetailScreen({ route }: Props) {
         data={items}
         keyExtractor={(item) => String(item.id)}
         ListHeaderComponent={header}
+        ListFooterComponent={footer}
         ListEmptyComponent={
           <Text style={styles.emptyText}>Nenhum item detalhado para esta compra.</Text>
         }
@@ -241,6 +252,8 @@ const styles = StyleSheet.create({
     borderBottomColor: '#f3f4f6',
   },
   itemDescription: { fontSize: 16, color: '#111827' },
+  deleteButton: { alignItems: 'center', padding: 20 },
+  deleteButtonText: { color: '#b91c1c', fontSize: 15, fontWeight: '600' },
   itemLink: { fontSize: 13, color: '#2563eb', marginTop: 2 },
   itemDetails: { fontSize: 13, color: '#6b7280', marginTop: 2 },
   itemTotal: { fontSize: 14, fontWeight: '600', color: '#111827', marginTop: 2 },

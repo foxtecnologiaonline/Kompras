@@ -5,6 +5,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSQLiteContext } from 'expo-sqlite';
 import type { PurchaseWithCount, RootStackParamList } from '../types';
 import { getPurchases } from '../db/repository';
+import { confirmAndDeletePurchase } from '../utils/purchaseActions';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'History'>;
 
@@ -30,10 +31,16 @@ export default function HistoryScreen({ navigation }: Props) {
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={purchases.length === 0 ? styles.emptyContainer : undefined}
         ListEmptyComponent={<Text style={styles.emptyText}>Nenhuma compra registrada ainda.</Text>}
+        ListHeaderComponent={
+          purchases.length > 0 ? (
+            <Text style={styles.hint}>Toque e segure uma compra para excluir</Text>
+          ) : null
+        }
         renderItem={({ item }) => (
           <Pressable
             style={styles.row}
             onPress={() => navigation.navigate('HistoryDetail', { purchaseId: item.id })}
+            onLongPress={() => confirmAndDeletePurchase(db, item, load)}
           >
             <View>
               <Text style={styles.date}>{formatDate(item.purchase_date)}</Text>
@@ -62,6 +69,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { color: '#6b7280', fontSize: 16 },
+  hint: { color: '#9ca3af', fontSize: 12, paddingHorizontal: 20, paddingVertical: 8 },
   row: {
     flexDirection: 'row',
     justifyContent: 'space-between',

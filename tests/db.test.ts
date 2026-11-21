@@ -272,3 +272,51 @@ describe('planned × bought links', () => {
     assert.ok(items.every((i) => i.list_item_id === null && i.list_item_link_source === null));
   });
 });
+
+describe('deletePurchase', () => {
+  const purchaseFor = (listId: number | null, receiptPhotoUri?: string) =>
+    repo.createPurchase(db, {
+      listId,
+      purchaseDate: '2026-11-01T00:00:00Z',
+      totalValue: 6,
+      rawSource: receiptPhotoUri ? 'manual_fallback' : 'qr_parsed',
+      receiptPhotoUri,
+      items: receiptPhotoUri ? [] : [{ description: 'LEITE', quantity: 1, unitValue: 6 }],
+    });
+
+  test('removes the purchase and its items (even when linked to list items)', async () => {
+    const listId = await repo.createShoppingList(db);
+    await repo.addListItem(db, listId, 'Leite');
+    const id = await purchaseFor(listId); // auto-links LEITE to the list item
+    assert.equal(await repo.deletePurchase(db, id), null);
+    assert.equal(await repo.getPurchase(db, id), null);
+    assert.equal(countRows('purchase_item'), 0);
+    assert.equal(countRows('shopping_list_item'), 1); // the plan itself is untouched
+  });
+
+  test('returns the receipt uri so the caller can delete the file', async () => {
+    const id = await purchaseFor(null, 'file:///receipts/r.pdf');
+    assert.equal(await repo.deletePurchase(db, id), 'file:///receipts/r.pdf');
+  });
+
+  test("reopens the list when that was the list's only purchase", async () => {
+    const listId = await repo.createShoppingList(db);
+    const id = await purchaseFor(listId);
+    assert.ok((await repo.getShoppingList(db, listId))?.closed_at);
+    await repo.deletePurchase(db, id);
+    assert.equal((await repo.getShoppingList(db, listId))?.closed_at, null);
+  });
+
+  test('keeps the list closed when it still has another purchase', async () => {
+    const listId = await repo.createShoppingList(db);
+    const first = await purchaseFor(listId);
+    await repo.reopenShoppingList(db, listId);
+    await purchaseFor(listId); // second purchase closes it again
+    await repo.deletePurchase(db, first);
+    assert.ok((await repo.getShoppingList(db, listId))?.closed_at);
+  });
+
+  test('deleting a purchase that does not exist is a harmless no-op', async () => {
+    assert.equal(await repo.deletePurchase(db, 999), null);
+  });
+});

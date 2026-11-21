@@ -4,11 +4,11 @@ App mínimo de lista de compras para validar a dor pessoal do fundador antes de 
 
 ## Stack
 
-- React Native + Expo (SDK 57)
-- SQLite local via `expo-sqlite`
-- Leitura de QR Code via `expo-camera`
-- `fetch` client-side para o portal público de NFC-e (Sefaz-MG)
-- Sem autenticação, sem backend
+- React Native + Expo (SDK 57), TypeScript estrito
+- SQLite local via `expo-sqlite` (migrações versionadas em `src/db/database.ts`)
+- QR Code via `expo-camera`; foto/galeria via `expo-image-picker`; PDF via `expo-document-picker`
+- Leitura da NFC-e do portal Sefaz-MG dentro de um `react-native-webview` (o portal exige passar por um desafio Cloudflare, que um `fetch` não consegue)
+- Sem autenticação, sem backend — tudo fica no aparelho
 
 ## Rodando o projeto
 
@@ -58,23 +58,31 @@ Uma parte do tamanho é inerente à funcionalidade de escanear o QR do cupom: o 
 
 ## Funcionalidades (Fase 0)
 
-1. **Lista de compras** — criar, editar e excluir itens (nome livre); persiste localmente.
-2. **Modo compra** — marcar itens como "pego" na tela da lista.
-3. **Fechamento de compra** — escanear o QR Code do cupom fiscal (NFC-e), extrair itens e valor total automaticamente via parse do HTML do portal Sefaz-MG; se o parse falhar, permite informar o valor total manualmente.
-4. **Histórico** — lista de compras fechadas, com detalhe de itens e valores.
-5. **Planejado × comprado** — no detalhe de uma compra, compara a lista com o cupom: o que foi comprado, o que ficou de fora e o que entrou **fora da lista** (valor e % dos itens). O app sugere o vínculo item da lista ↔ item do cupom por palavras em comum (`src/utils/matching.ts`); toque num item para corrigir ou desvincular. Sem itens de cupom (valor manual), usa só o "pego" da lista. Uma lista fechada fica somente leitura até ser reaberta; excluir a lista apaga o lado "planejado" (a compra e o cupom permanecem).
+1. **Listas de compras** — criar, nomear/renomear e excluir; itens com quantidade (aceita decimais, ex.: `0,5` kg), marcar como "pego", colar várias linhas de uma vez. Uma lista fechada fica somente leitura até ser reaberta.
+2. **Fechar compra** — escanear o QR do cupom (câmera ao vivo, foto ou imagem da galeria). O app abre o portal da Sefaz-MG num WebView; você passa pela verificação, toca em "Visualizar" e depois em "Capturar dados do cupom". O parser (`src/utils/nfce.ts`) extrai itens, total e data, e **confere a soma dos itens com o total**: se não bater (desconto ou item não lido), pergunta antes de salvar. Se o parse falha, dá para compartilhar o HTML limpo para diagnóstico. Sem QR: foto do cupom inteiro, PDF do cupom ou só o valor total — essas opções não dependem da permissão de câmera do scanner.
+3. **Planejado × comprado** — no detalhe da compra, compara a lista com o cupom: o que foi comprado, o que ficou de fora e o que entrou **fora da lista** (valor e % dos itens). O app sugere o vínculo item da lista ↔ item do cupom por palavras em comum (`src/utils/matching.ts`); toque num item para corrigir ou desvincular. Sem itens de cupom (valor manual), usa só o "pego" da lista.
+4. **Histórico** — compras fechadas, com itens, valores, foto/PDF do cupom e o comparativo. Dá para excluir uma compra (apaga itens e anexo e, se era a única da lista, reabre a lista).
 
 ## Estrutura
 
 ```
 src/
-  db/            # schema SQLite e funções de acesso a dados
+  db/            # schema/migrações SQLite e funções de acesso a dados
   navigation/    # stack de navegação
   screens/       # telas do app
+  components/    # PlanComparison (planejado × comprado), LinkPicker
   types/         # tipos compartilhados
-  utils/nfce.ts  # extração da URL do QR e parse do HTML da NFC-e
+  utils/         # nfce (parser), matching, comparison, quantity, format, receiptPhoto, purchaseActions
+tests/           # testes unitários (Node test runner) e fixtures
 ```
 
 ## Fora de escopo nesta fase
 
-Ver `AGENTS.md`/histórico do projeto — sem compartilhamento entre usuários, sem OCR, sem outras UFs além de MG, sem catálogo de produtos, sem relatórios/gráficos, sem autenticação, sem web/PWA.
+Sem compartilhamento entre usuários, sem OCR, sem outras UFs além de MG, sem catálogo de produtos (o vínculo planejado × comprado só usa palavras em comum), sem relatórios/gráficos, sem autenticação, sem web/PWA.
+
+## Limitações conhecidas
+
+- **Os dados vivem só no aparelho.** Não há backup nem sincronização: desinstalar o app (ou limpar seus dados) apaga listas, compras e anexos.
+- **A leitura da NFC-e depende do portal da Sefaz-MG** (layout e desafio Cloudflare) e exige os passos manuais descritos acima. Se o layout mudar, o parser precisa de ajuste — use "Compartilhar dados técnicos".
+- **O casamento lista ↔ cupom é uma sugestão.** Erra abreviações ("refri" ↔ "COCA COLA 2L"); a correção é manual. Cada vínculo guarda se foi `auto` ou `manual` (`purchase_item.list_item_link_source`) para medir a taxa de acerto.
+- Os HTMLs em `tests/fixtures/` são sintéticos, não capturas reais.

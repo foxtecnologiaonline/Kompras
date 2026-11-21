@@ -280,6 +280,39 @@ export async function unlinkPurchaseItem(db: SQLiteDatabase, purchaseItemId: num
   );
 }
 
+/**
+ * Deletes a purchase and its items. If that leaves its list without any
+ * purchase, the list is reopened — otherwise it would stay "closed" pointing
+ * at nothing. Returns the attached receipt's URI so the caller can remove the
+ * file (the database layer doesn't touch the filesystem); null when there was
+ * none or the purchase didn't exist.
+ */
+export async function deletePurchase(db: SQLiteDatabase, purchaseId: number): Promise<string | null> {
+  let receiptUri: string | null = null;
+  await db.withTransactionAsync(async () => {
+    const purchase = await db.getFirstAsync<{ list_id: number | null; receipt_photo_uri: string | null }>(
+      'SELECT list_id, receipt_photo_uri FROM purchase WHERE id = ?',
+      purchaseId
+    );
+    if (!purchase) return;
+    receiptUri = purchase.receipt_photo_uri;
+
+    await db.runAsync('DELETE FROM purchase_item WHERE purchase_id = ?', purchaseId);
+    await db.runAsync('DELETE FROM purchase WHERE id = ?', purchaseId);
+
+    if (purchase.list_id !== null) {
+      const another = await db.getFirstAsync<{ id: number }>(
+        'SELECT id FROM purchase WHERE list_id = ? LIMIT 1',
+        purchase.list_id
+      );
+      if (!another) {
+        await db.runAsync('UPDATE shopping_list SET closed_at = NULL WHERE id = ?', purchase.list_id);
+      }
+    }
+  });
+  return receiptUri;
+}
+
 /** Most recent purchase recorded for a list, used to jump from a closed list to its receipt. */
 export async function getLatestPurchaseIdForList(
   db: SQLiteDatabase,
