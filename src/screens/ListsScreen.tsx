@@ -128,6 +128,9 @@ export default function ListsScreen({ navigation }: Props) {
             {item.name && (
               <Text style={styles.listSubtitle}>Criada em {formatDate(item.created_at)}</Text>
             )}
+            {item.closed_at && (
+              <Text style={styles.listClosed}>✓ Compra fechada em {formatDate(item.closed_at)}</Text>
+            )}
           </Pressable>
         )}
       />
@@ -199,6 +202,7 @@ const styles = StyleSheet.create({
   },
   listTitle: { fontSize: 17, color: '#111827' },
   listSubtitle: { fontSize: 13, color: '#9ca3af', marginTop: 2 },
+  listClosed: { fontSize: 13, color: '#16a34a', marginTop: 2, fontWeight: '600' },
   createButton: {
     backgroundColor: '#2563eb',
     margin: 16,

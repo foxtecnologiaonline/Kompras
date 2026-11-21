@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   Image,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   StyleSheet,
@@ -18,7 +20,11 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types';
 import { createPurchase } from '../db/repository';
 import { extractUrlFromQrData } from '../utils/nfce';
-import { persistReceiptDocument, persistReceiptPhoto } from '../utils/receiptPhoto';
+import {
+  discardReceiptAttachment,
+  persistReceiptDocument,
+  persistReceiptPhoto,
+} from '../utils/receiptPhoto';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Scan'>;
 
@@ -122,15 +128,39 @@ export default function ScanScreen({ route, navigation }: Props) {
     }
   };
 
+  /**
+   * Opens the system camera and returns the photo's URI, or null if the user
+   * cancelled or the camera isn't usable. launchCameraAsync needs the camera
+   * permission and the user has to hear about a refusal — silently doing
+   * nothing looks like a dead button. (This is independent of the live QR
+   * scanner's expo-camera permission, so it works even when that was denied.)
+   */
+  const takeCameraPhoto = async (): Promise<string | null> => {
+    const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permissionResult.granted) {
+      Alert.alert(
+        'Câmera bloqueada',
+        'Para fotografar o cupom, permita o uso da câmera nas configurações do aparelho.',
+        [
+          { text: 'Agora não', style: 'cancel' },
+          { text: 'Abrir configurações', onPress: () => Linking.openSettings() },
+        ]
+      );
+      return null;
+    }
+    const result = await ImagePicker.launchCameraAsync({ quality: 0.7 });
+    if (result.canceled || result.assets.length === 0) return null;
+    return result.assets[0].uri;
+  };
+
   const handleAttachPhotoFromCamera = async () => {
     if (actionLockRef.current) return;
     actionLockRef.current = true;
     try {
-      const result = await ImagePicker.launchCameraAsync({ quality: 0.7 });
-      if (result.canceled || result.assets.length === 0) return;
-      setAttachment({ kind: 'photo', uri: result.assets[0].uri });
+      const uri = await takeCameraPhoto();
+      if (uri) setAttachment({ kind: 'photo', uri });
     } catch {
-      // camera unavailable or permission denied — user just stays without a photo attached
+      Alert.alert('Não foi possível abrir a câmera', 'Tente novamente ou escolha uma foto da galeria.');
     } finally {
       actionLockRef.current = false;
     }
@@ -177,46 +207,57 @@ export default function ScanScreen({ route, navigation }: Props) {
     if (actionLockRef.current) return;
     actionLockRef.current = true;
     try {
-      const result = await ImagePicker.launchCameraAsync({ quality: 0.7 });
-      if (result.canceled || result.assets.length === 0) return;
-      setAttachment({ kind: 'photo', uri: result.assets[0].uri });
+      const uri = await takeCameraPhoto();
+      if (!uri) return;
+      setAttachment({ kind: 'photo', uri });
       setErrorMessage('');
       setStage('manual');
     } catch {
-      // camera unavailable or permission denied — nothing to recover here
+      Alert.alert('Não foi possível abrir a câmera', 'Tente novamente ou informe o valor manualmente.');
     } finally {
       actionLockRef.current = false;
     }
   };
 
   const handleManualSave = async () => {
+    if (actionLockRef.current) return;
     const total = parseFloat(manualTotal.replace(',', '.'));
     if (!Number.isFinite(total) || total <= 0) {
       setErrorMessage('Informe um valor válido maior que zero.');
       return;
     }
+    actionLockRef.current = true;
     setErrorMessage('');
     setStage('saving');
     let persistedUri: string | null = null;
-    if (attachment) {
-      try {
-        persistedUri =
-          attachment.kind === 'photo'
-            ? await persistReceiptPhoto(attachment.uri)
-            : await persistReceiptDocument(attachment.uri, attachment.name);
-      } catch {
-        // couldn't persist the attachment — still save the purchase with the total the user typed
+    try {
+      if (attachment) {
+        try {
+          persistedUri =
+            attachment.kind === 'photo'
+              ? await persistReceiptPhoto(attachment.uri)
+              : await persistReceiptDocument(attachment.uri, attachment.name);
+        } catch {
+          // couldn't persist the attachment — still save the purchase with the total the user typed
+        }
       }
+      const purchaseId = await createPurchase(db, {
+        listId,
+        purchaseDate: new Date().toISOString(),
+        totalValue: total,
+        rawSource: 'manual_fallback',
+        receiptPhotoUri: persistedUri,
+      });
+      navigation.replace('HistoryDetail', { purchaseId });
+    } catch {
+      // Don't strand the user on "Processando…": go back to the form with what
+      // they typed intact, and don't leave an orphaned copy of the attachment.
+      if (persistedUri) discardReceiptAttachment(persistedUri);
+      setErrorMessage('Não foi possível salvar a compra. Tente novamente.');
+      setStage('manual');
+    } finally {
+      actionLockRef.current = false;
     }
-    const purchaseId = await createPurchase(
-      db,
-      listId,
-      new Date().toISOString(),
-      total,
-      'manual_fallback',
-      persistedUri
-    );
-    navigation.replace('HistoryDetail', { purchaseId });
   };
 
   const retryScan = () => {
@@ -230,21 +271,6 @@ export default function ScanScreen({ route, navigation }: Props) {
     setAttachment(null);
     setStage('manual');
   };
-
-  if (!permission) {
-    return <View style={styles.container} />;
-  }
-
-  if (!permission.granted) {
-    return (
-      <View style={styles.centerContainer}>
-        <Text style={styles.message}>Precisamos da câmera para escanear o QR do cupom.</Text>
-        <Pressable style={styles.primaryButton} onPress={requestPermission}>
-          <Text style={styles.primaryButtonText}>Permitir câmera</Text>
-        </Pressable>
-      </View>
-    );
-  }
 
   if (stage === 'manual') {
     return (
@@ -332,6 +358,40 @@ export default function ScanScreen({ route, navigation }: Props) {
     return (
       <View style={styles.centerContainer}>
         <Text style={styles.message}>Processando cupom...</Text>
+      </View>
+    );
+  }
+
+  // The camera permission only matters for live scanning. Manual entry, PDF
+  // and photo attachments must stay reachable when it's denied.
+  if (!permission) {
+    return <View style={styles.container} />;
+  }
+
+  if (!permission.granted) {
+    return (
+      <View style={styles.centerContainer}>
+        <Text style={styles.title}>Câmera desativada</Text>
+        <Text style={styles.message}>
+          Precisamos da câmera para escanear o QR do cupom. Você também pode seguir sem ela.
+        </Text>
+        <Pressable
+          style={styles.primaryButton}
+          onPress={permission.canAskAgain ? requestPermission : () => Linking.openSettings()}
+        >
+          <Text style={styles.primaryButtonText}>
+            {permission.canAskAgain ? 'Permitir câmera' : 'Abrir configurações'}
+          </Text>
+        </Pressable>
+        <Pressable style={styles.secondaryButton} onPress={handlePickImage}>
+          <Text style={styles.secondaryButtonText}>Escolher imagem do QR da galeria</Text>
+        </Pressable>
+        <Pressable style={styles.secondaryButton} onPress={handleAttachPdf}>
+          <Text style={styles.secondaryButtonText}>📄 Inserir PDF do cupom</Text>
+        </Pressable>
+        <Pressable style={styles.secondaryButton} onPress={goToManual}>
+          <Text style={styles.secondaryButtonText}>Informar valor manualmente</Text>
+        </Pressable>
       </View>
     );
   }

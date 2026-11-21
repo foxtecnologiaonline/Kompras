@@ -19,6 +19,16 @@ async function persistReceiptAttachment(sourceUri: string, extension: string): P
   return dest.uri;
 }
 
+/** Removes an attachment saved by persistReceiptPhoto/Document, e.g. when the purchase it belonged to failed to save. */
+export function discardReceiptAttachment(uri: string): void {
+  try {
+    const file = new File(uri);
+    if (file.exists) file.delete();
+  } catch {
+    // best effort — a leftover file is harmless
+  }
+}
+
 export async function persistReceiptPhoto(sourceUri: string): Promise<string> {
   return persistReceiptAttachment(sourceUri, '.jpg');
 }

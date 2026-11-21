@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import {
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -12,13 +13,15 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSQLiteContext } from 'expo-sqlite';
-import type { RootStackParamList, ShoppingListItem } from '../types';
+import type { RootStackParamList, ShoppingList, ShoppingListItem } from '../types';
 import {
   addListItem,
   addListItems,
   deleteListItem,
+  getLatestPurchaseIdForList,
   getListItems,
   getShoppingList,
+  reopenShoppingList,
   setListItemChecked,
   updateListItemName,
   updateListItemQuantity,
@@ -30,14 +33,21 @@ export default function ListDetailScreen({ route, navigation }: Props) {
   const { listId } = route.params;
   const db = useSQLiteContext();
   const [items, setItems] = useState<ShoppingListItem[]>([]);
+  const [list, setList] = useState<ShoppingList | null>(null);
   const [newItemName, setNewItemName] = useState('');
   const newItemInputRef = useRef<TextInput>(null);
 
   const load = useCallback(async () => {
-    const [rows, list] = await Promise.all([getListItems(db, listId), getShoppingList(db, listId)]);
+    const [rows, loadedList] = await Promise.all([
+      getListItems(db, listId),
+      getShoppingList(db, listId),
+    ]);
     setItems(rows);
-    if (list) {
-      const title = list.name?.trim() || `Lista de ${new Date(list.created_at).toLocaleDateString('pt-BR')}`;
+    setList(loadedList);
+    if (loadedList) {
+      const title =
+        loadedList.name?.trim() ||
+        `Lista de ${new Date(loadedList.created_at).toLocaleDateString('pt-BR')}`;
       navigation.setOptions({ title });
     }
   }, [db, listId, navigation]);
@@ -107,6 +117,34 @@ export default function ListDetailScreen({ route, navigation }: Props) {
     await updateListItemQuantity(db, item.id, quantity);
   };
 
+  const isClosed = !!list?.closed_at;
+
+  const handleViewPurchase = async () => {
+    const purchaseId = await getLatestPurchaseIdForList(db, listId);
+    if (purchaseId === null) {
+      Alert.alert('Compra não encontrada', 'Reabra a lista para registrar a compra de novo.');
+      return;
+    }
+    navigation.navigate('HistoryDetail', { purchaseId });
+  };
+
+  const handleReopen = () => {
+    Alert.alert(
+      'Reabrir lista',
+      'A compra já registrada continua no histórico. Reabrir permite fechar esta lista de novo e pode gerar uma segunda compra.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Reabrir',
+          onPress: async () => {
+            await reopenShoppingList(db, listId);
+            await load();
+          },
+        },
+      ]
+    );
+  };
+
   const handleDelete = async (item: ShoppingListItem) => {
     await deleteListItem(db, item.id);
     await load();
@@ -165,12 +203,23 @@ export default function ListDetailScreen({ route, navigation }: Props) {
         </Pressable>
       </View>
 
-      <Pressable
-        style={styles.closeButton}
-        onPress={() => navigation.navigate('Scan', { listId })}
-      >
-        <Text style={styles.closeButtonText}>Fechar compra</Text>
-      </Pressable>
+      {isClosed ? (
+        <>
+          <Pressable style={styles.viewPurchaseButton} onPress={handleViewPurchase}>
+            <Text style={styles.closeButtonText}>Compra fechada — ver no histórico</Text>
+          </Pressable>
+          <Pressable style={styles.reopenButton} onPress={handleReopen}>
+            <Text style={styles.reopenButtonText}>Reabrir lista</Text>
+          </Pressable>
+        </>
+      ) : (
+        <Pressable
+          style={styles.closeButton}
+          onPress={() => navigation.navigate('Scan', { listId })}
+        >
+          <Text style={styles.closeButtonText}>Fechar compra</Text>
+        </Pressable>
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -248,4 +297,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   closeButtonText: { color: '#fff', fontSize: 17, fontWeight: '700' },
+  viewPurchaseButton: {
+    backgroundColor: '#2563eb',
+    margin: 16,
+    marginTop: 4,
+    marginBottom: 4,
+    paddingVertical: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  reopenButton: { alignItems: 'center', paddingVertical: 10, marginBottom: 8 },
+  reopenButtonText: { color: '#6b7280', fontSize: 14, fontWeight: '600' },
 });

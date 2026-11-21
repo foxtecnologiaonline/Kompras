@@ -44,9 +44,18 @@ export async function updateShoppingListName(
 }
 
 export async function deleteShoppingList(db: SQLiteDatabase, listId: number): Promise<void> {
-  await db.runAsync('DELETE FROM shopping_list_item WHERE list_id = ?', listId);
-  await db.runAsync('UPDATE purchase SET list_id = NULL WHERE list_id = ?', listId);
-  await db.runAsync('DELETE FROM shopping_list WHERE id = ?', listId);
+  // Order matters now that foreign keys are enforced: children first, and the
+  // purchases (history) are detached rather than deleted.
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('DELETE FROM shopping_list_item WHERE list_id = ?', listId);
+    await db.runAsync('UPDATE purchase SET list_id = NULL WHERE list_id = ?', listId);
+    await db.runAsync('DELETE FROM shopping_list WHERE id = ?', listId);
+  });
+}
+
+/** Lets a closed list be closed again (e.g. the first purchase was recorded by mistake). */
+export async function reopenShoppingList(db: SQLiteDatabase, listId: number): Promise<void> {
+  await db.runAsync('UPDATE shopping_list SET closed_at = NULL WHERE id = ?', listId);
 }
 
 // ---- shopping_list_item ----
@@ -136,39 +145,74 @@ export async function deleteListItem(db: SQLiteDatabase, itemId: number): Promis
 
 // ---- purchase ----
 
-export async function createPurchase(
-  db: SQLiteDatabase,
-  listId: number | null,
-  purchaseDate: string,
-  totalValue: number,
-  rawSource: PurchaseSource,
-  receiptPhotoUri: string | null = null
-): Promise<number> {
-  const result = await db.runAsync(
-    'INSERT INTO purchase (list_id, purchase_date, total_value, raw_source, receipt_photo_uri) VALUES (?, ?, ?, ?, ?)',
-    listId,
-    purchaseDate,
-    totalValue,
-    rawSource,
-    receiptPhotoUri
-  );
-  return result.lastInsertRowId;
+export interface NewPurchaseItem {
+  description: string;
+  unitValue: number;
+  quantity: number;
 }
 
-export async function addPurchaseItem(
+export interface NewPurchase {
+  listId: number | null;
+  purchaseDate: string;
+  totalValue: number;
+  rawSource: PurchaseSource;
+  receiptPhotoUri?: string | null;
+  items?: NewPurchaseItem[];
+}
+
+/**
+ * Records a purchase, its items and — when it belongs to a list — marks that
+ * list as closed, all in one transaction: either everything is saved or
+ * nothing is, so a failure halfway never leaves a purchase with missing items.
+ *
+ * Uses withTransactionAsync (not the exclusive variant) so the writes stay on
+ * the main connection where foreign keys are enforced. Only call this with no
+ * other database work in flight.
+ */
+export async function createPurchase(db: SQLiteDatabase, purchase: NewPurchase): Promise<number> {
+  let purchaseId = 0;
+  await db.withTransactionAsync(async () => {
+    const result = await db.runAsync(
+      'INSERT INTO purchase (list_id, purchase_date, total_value, raw_source, receipt_photo_uri) VALUES (?, ?, ?, ?, ?)',
+      purchase.listId,
+      purchase.purchaseDate,
+      purchase.totalValue,
+      purchase.rawSource,
+      purchase.receiptPhotoUri ?? null
+    );
+    purchaseId = result.lastInsertRowId;
+
+    for (const item of purchase.items ?? []) {
+      await db.runAsync(
+        'INSERT INTO purchase_item (purchase_id, description, unit_value, quantity) VALUES (?, ?, ?, ?)',
+        purchaseId,
+        item.description,
+        item.unitValue,
+        item.quantity
+      );
+    }
+
+    if (purchase.listId !== null) {
+      await db.runAsync(
+        'UPDATE shopping_list SET closed_at = ? WHERE id = ?',
+        new Date().toISOString(),
+        purchase.listId
+      );
+    }
+  });
+  return purchaseId;
+}
+
+/** Most recent purchase recorded for a list, used to jump from a closed list to its receipt. */
+export async function getLatestPurchaseIdForList(
   db: SQLiteDatabase,
-  purchaseId: number,
-  description: string,
-  unitValue: number,
-  quantity: number
-): Promise<void> {
-  await db.runAsync(
-    'INSERT INTO purchase_item (purchase_id, description, unit_value, quantity) VALUES (?, ?, ?, ?)',
-    purchaseId,
-    description,
-    unitValue,
-    quantity
+  listId: number
+): Promise<number | null> {
+  const row = await db.getFirstAsync<{ id: number }>(
+    'SELECT id FROM purchase WHERE list_id = ? ORDER BY id DESC LIMIT 1',
+    listId
   );
+  return row?.id ?? null;
 }
 
 export async function getPurchases(db: SQLiteDatabase): Promise<PurchaseWithCount[]> {

@@ -1,11 +1,11 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, Share, StyleSheet, Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { useSQLiteContext } from 'expo-sqlite';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types';
-import { addPurchaseItem, createPurchase } from '../db/repository';
-import { parseNfceHtml, stripScriptsAndStyles } from '../utils/nfce';
+import { createPurchase } from '../db/repository';
+import { parseNfceHtml, type ParsedNfce, stripScriptsAndStyles } from '../utils/nfce';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'NfceWebView'>;
 
@@ -33,16 +33,32 @@ export default function NfceWebViewScreen({ route, navigation }: Props) {
   const db = useSQLiteContext();
   const webViewRef = useRef<WebView>(null);
   const captureTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True only between tapping "Capturar" and the first reply (or the timeout).
+  // The page can post more than one message, and a reply can land after the
+  // timeout already reported failure; either would otherwise save the same
+  // coupon twice, or save one while an error is on screen.
+  const awaitingCaptureRef = useRef(false);
   const [capturing, setCapturing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [debugHtml, setDebugHtml] = useState<string | null>(null);
 
+  useEffect(
+    () => () => {
+      if (captureTimeoutRef.current) clearTimeout(captureTimeoutRef.current);
+    },
+    []
+  );
+
   const handleCapture = () => {
+    if (awaitingCaptureRef.current) return;
+    awaitingCaptureRef.current = true;
     setErrorMessage(null);
     setDebugHtml(null);
     setCapturing(true);
     webViewRef.current?.injectJavaScript(CAPTURE_HTML_JS);
     captureTimeoutRef.current = setTimeout(() => {
+      captureTimeoutRef.current = null;
+      awaitingCaptureRef.current = false;
       setCapturing(false);
       setErrorMessage(
         'Não conseguimos capturar os dados da página. Verifique se os dados do cupom já apareceram na tela e tente de novo.'
@@ -51,24 +67,17 @@ export default function NfceWebViewScreen({ route, navigation }: Props) {
   };
 
   const handleMessage = async (event: WebViewMessageEvent) => {
+    if (!awaitingCaptureRef.current) return;
+    awaitingCaptureRef.current = false;
     if (captureTimeoutRef.current) {
       clearTimeout(captureTimeoutRef.current);
       captureTimeoutRef.current = null;
     }
+
     const html = event.nativeEvent.data;
+    let parsed: ParsedNfce;
     try {
-      const parsed = parseNfceHtml(html);
-      const purchaseId = await createPurchase(
-        db,
-        listId,
-        parsed.purchaseDate,
-        parsed.totalValue,
-        'qr_parsed'
-      );
-      for (const item of parsed.items) {
-        await addPurchaseItem(db, purchaseId, item.description, item.unitValue, item.quantity);
-      }
-      navigation.replace('HistoryDetail', { purchaseId });
+      parsed = parseNfceHtml(html);
     } catch (err) {
       setDebugHtml(stripScriptsAndStyles(html));
       setErrorMessage(
@@ -76,6 +85,23 @@ export default function NfceWebViewScreen({ route, navigation }: Props) {
           ? err.message
           : 'Não foi possível interpretar os dados do cupom nessa tela.'
       );
+      setCapturing(false);
+      return;
+    }
+
+    try {
+      // One transaction: the purchase, all its items and the list's "closed"
+      // mark are saved together or not at all.
+      const purchaseId = await createPurchase(db, {
+        listId,
+        purchaseDate: parsed.purchaseDate,
+        totalValue: parsed.totalValue,
+        rawSource: 'qr_parsed',
+        items: parsed.items,
+      });
+      navigation.replace('HistoryDetail', { purchaseId });
+    } catch {
+      setErrorMessage('O cupom foi lido, mas não conseguimos salvar a compra. Tente capturar de novo.');
       setCapturing(false);
     }
   };

@@ -4,6 +4,12 @@ export const DB_NAME = 'kompras.db';
 
 export async function migrateDbIfNeeded(db: SQLiteDatabase): Promise<void> {
   await db.execAsync('PRAGMA journal_mode = WAL;');
+  // Foreign key enforcement is per connection (and a no-op inside a
+  // transaction), so it has to be set here, before anything else touches the
+  // database. Writes that must honor it therefore use db.withTransactionAsync
+  // (same connection) — never withExclusiveTransactionAsync, which opens a new
+  // connection that doesn't inherit this setting.
+  await db.execAsync('PRAGMA foreign_keys = ON;');
 
   const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
   let version = row?.user_version ?? 0;
@@ -59,6 +65,13 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase): Promise<void> {
   if (version < 4) {
     await db.execAsync('ALTER TABLE shopping_list ADD COLUMN name TEXT;');
     version = 4;
+  }
+
+  if (version < 5) {
+    // Set when the list's purchase is closed (coupon scanned/typed), so the
+    // same list can't be closed twice and end up duplicated in the history.
+    await db.execAsync('ALTER TABLE shopping_list ADD COLUMN closed_at TEXT;');
+    version = 5;
   }
 
   await db.execAsync(`PRAGMA user_version = ${version};`);
