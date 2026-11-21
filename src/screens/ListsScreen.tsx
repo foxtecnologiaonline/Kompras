@@ -75,7 +75,9 @@ export default function ListsScreen({ navigation }: Props) {
   const handleDelete = (list: ShoppingList) => {
     Alert.alert(
       'Excluir lista',
-      `Excluir "${listDisplayName(list)}"? Os itens dela serão perdidos.`,
+      list.closed_at
+        ? `Excluir "${listDisplayName(list)}"? Os itens dela e o comparativo planejado × comprado serão perdidos. A compra e o cupom continuam no histórico.`
+        : `Excluir "${listDisplayName(list)}"? Os itens dela serão perdidos.`,
       [
         { text: 'Cancelar', style: 'cancel' },
         {

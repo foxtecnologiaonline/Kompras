@@ -4,8 +4,10 @@ import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSQLiteContext } from 'expo-sqlite';
 import * as Sharing from 'expo-sharing';
-import type { Purchase, PurchaseItem, RootStackParamList } from '../types';
-import { getPurchase, getPurchaseItems } from '../db/repository';
+import type { Purchase, PurchaseItem, RootStackParamList, ShoppingListItem } from '../types';
+import { getListItems, getPurchase, getPurchaseItems } from '../db/repository';
+import { summarizeChecked } from '../utils/comparison';
+import PlanComparison from '../components/PlanComparison';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'HistoryDetail'>;
 
@@ -14,14 +16,18 @@ export default function HistoryDetailScreen({ route }: Props) {
   const db = useSQLiteContext();
   const [purchase, setPurchase] = useState<Purchase | null>(null);
   const [items, setItems] = useState<PurchaseItem[]>([]);
+  const [plannedItems, setPlannedItems] = useState<ShoppingListItem[]>([]);
 
   const load = useCallback(async () => {
     const [p, i] = await Promise.all([
       getPurchase(db, purchaseId),
       getPurchaseItems(db, purchaseId),
     ]);
+    // list_id is cleared when the list is deleted, which also drops the plan.
+    const planned = p?.list_id != null ? await getListItems(db, p.list_id) : [];
     setPurchase(p);
     setItems(i);
+    setPlannedItems(planned);
   }, [db, purchaseId]);
 
   useFocusEffect(
@@ -48,8 +54,8 @@ export default function HistoryDetailScreen({ route }: Props) {
     }
   };
 
-  return (
-    <View style={styles.container}>
+  const header = (
+    <View>
       <View style={styles.header}>
         <Text style={styles.date}>{formatDate(purchase.purchase_date)}</Text>
         <Text style={styles.total}>{formatCurrency(purchase.total_value)}</Text>
@@ -69,26 +75,31 @@ export default function HistoryDetailScreen({ route }: Props) {
           })()}
       </View>
 
-      <FlatList
-        data={items}
-        keyExtractor={(item) => String(item.id)}
-        contentContainerStyle={items.length === 0 ? styles.emptyContainer : undefined}
-        ListEmptyComponent={
-          <Text style={styles.emptyText}>Nenhum item detalhado para esta compra.</Text>
-        }
-        renderItem={({ item }) => (
-          <View style={styles.itemRow}>
-            <Text style={styles.itemDescription}>{item.description}</Text>
-            <Text style={styles.itemDetails}>
-              {item.quantity} × {formatCurrency(item.unit_value)}
-            </Text>
-            <Text style={styles.itemTotal}>
-              {formatCurrency(item.quantity * item.unit_value)}
-            </Text>
-          </View>
-        )}
-      />
+      {plannedItems.length > 0 && <PlanComparison summary={summarizeChecked(plannedItems)} />}
     </View>
+  );
+
+  // The whole screen scrolls as one list: the header (photo + comparison) can be
+  // tall, and a fixed header would squeeze the coupon items on small phones.
+  return (
+    <FlatList
+      style={styles.container}
+      data={items}
+      keyExtractor={(item) => String(item.id)}
+      ListHeaderComponent={header}
+      ListEmptyComponent={
+        <Text style={styles.emptyText}>Nenhum item detalhado para esta compra.</Text>
+      }
+      renderItem={({ item }) => (
+        <View style={styles.itemRow}>
+          <Text style={styles.itemDescription}>{item.description}</Text>
+          <Text style={styles.itemDetails}>
+            {item.quantity} × {formatCurrency(item.unit_value)}
+          </Text>
+          <Text style={styles.itemTotal}>{formatCurrency(item.quantity * item.unit_value)}</Text>
+        </View>
+      )}
+    />
   );
 }
 
@@ -125,7 +136,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   receiptPdfText: { fontSize: 15, color: '#2563eb', fontWeight: '600' },
-  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { color: '#6b7280', fontSize: 16, padding: 20, textAlign: 'center' },
   itemRow: {
     paddingVertical: 12,

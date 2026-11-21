@@ -35,6 +35,9 @@ export default function ListDetailScreen({ route, navigation }: Props) {
   const [items, setItems] = useState<ShoppingListItem[]>([]);
   const [list, setList] = useState<ShoppingList | null>(null);
   const [newItemName, setNewItemName] = useState('');
+  // A closed list is a record of what was planned for a purchase; editing it
+  // afterwards would silently rewrite that plan. Reopening unlocks it.
+  const isClosed = !!list?.closed_at;
   const newItemInputRef = useRef<TextInput>(null);
 
   const load = useCallback(async () => {
@@ -90,6 +93,7 @@ export default function ListDetailScreen({ route, navigation }: Props) {
   };
 
   const handleToggle = async (item: ShoppingListItem) => {
+    if (isClosed) return;
     await setListItemChecked(db, item.id, !item.checked);
     await load();
   };
@@ -116,8 +120,6 @@ export default function ListDetailScreen({ route, navigation }: Props) {
     setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, quantity } : i)));
     await updateListItemQuantity(db, item.id, quantity);
   };
-
-  const isClosed = !!list?.closed_at;
 
   const handleViewPurchase = async () => {
     const purchaseId = await getLatestPurchaseIdForList(db, listId);
@@ -159,10 +161,17 @@ export default function ListDetailScreen({ route, navigation }: Props) {
         data={items}
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={items.length === 0 ? styles.emptyContainer : undefined}
+        ListHeaderComponent={
+          isClosed ? (
+            <Text style={styles.closedBanner}>
+              Lista fechada — somente leitura. Reabra a lista para editar.
+            </Text>
+          ) : null
+        }
         ListEmptyComponent={<Text style={styles.emptyText}>Adicione itens à sua lista.</Text>}
         renderItem={({ item }) => (
           <View style={styles.itemRow}>
-            <Pressable style={styles.checkbox} onPress={() => handleToggle(item)}>
+            <Pressable style={styles.checkbox} onPress={() => handleToggle(item)} disabled={isClosed}>
               <View style={[styles.checkboxBox, item.checked && styles.checkboxBoxChecked]}>
                 {item.checked && <Text style={styles.checkboxMark}>✓</Text>}
               </View>
@@ -170,6 +179,7 @@ export default function ListDetailScreen({ route, navigation }: Props) {
             <TextInput
               style={[styles.itemInput, item.checked && styles.itemInputChecked]}
               value={item.name}
+              editable={!isClosed}
               onChangeText={(text) => handleRename(item, text)}
               onEndEditing={(e) => handleRenameCommit(item, e.nativeEvent.text)}
             />
@@ -180,28 +190,33 @@ export default function ListDetailScreen({ route, navigation }: Props) {
               onEndEditing={() => handleQuantityCommit(item)}
               keyboardType="number-pad"
               textAlign="center"
+              editable={!isClosed}
             />
-            <Pressable onPress={() => handleDelete(item)} style={styles.deleteButton}>
-              <Text style={styles.deleteButtonText}>✕</Text>
-            </Pressable>
+            {!isClosed && (
+              <Pressable onPress={() => handleDelete(item)} style={styles.deleteButton}>
+                <Text style={styles.deleteButtonText}>✕</Text>
+              </Pressable>
+            )}
           </View>
         )}
       />
 
-      <View style={styles.addRow}>
-        <TextInput
-          ref={newItemInputRef}
-          style={styles.addInput}
-          placeholder="Novo item (cole uma lista para adicionar vários)"
-          value={newItemName}
-          onChangeText={handleNewItemChangeText}
-          multiline
-          blurOnSubmit={false}
-        />
-        <Pressable style={styles.addButton} onPress={handleAdd}>
-          <Text style={styles.addButtonText}>Adicionar</Text>
-        </Pressable>
-      </View>
+      {!isClosed && (
+        <View style={styles.addRow}>
+          <TextInput
+            ref={newItemInputRef}
+            style={styles.addInput}
+            placeholder="Novo item (cole uma lista para adicionar vários)"
+            value={newItemName}
+            onChangeText={handleNewItemChangeText}
+            multiline
+            blurOnSubmit={false}
+          />
+          <Pressable style={styles.addButton} onPress={handleAdd}>
+            <Text style={styles.addButtonText}>Adicionar</Text>
+          </Pressable>
+        </View>
+      )}
 
       {isClosed ? (
         <>
@@ -228,6 +243,13 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { color: '#6b7280', fontSize: 16 },
+  closedBanner: {
+    backgroundColor: '#f3f4f6',
+    color: '#6b7280',
+    fontSize: 13,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
   itemRow: {
     flexDirection: 'row',
     alignItems: 'center',
